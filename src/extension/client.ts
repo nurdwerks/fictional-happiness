@@ -9,7 +9,7 @@ import {
     MessageType, BaseMessage, JoinMessage, TextOperationMessage,
     CursorSelectionMessage, WebRTCSignalMessage, FileCreateMessage,
     FileInitMessage, FileDeleteMessage, ChatMessage, FollowUserMessage,
-    TerminalDataMessage
+    TerminalDataMessage, ApproveRequestMessage, RejectRequestMessage, KickUserMessage
 } from '../common/messages';
 import { CollaborationServer } from '../server/server';
 
@@ -131,6 +131,24 @@ export class CollaborationClient {
                     } else {
                          vscode.window.showInformationMessage(`Stopped following user.`);
                     }
+                    break;
+                case 'approve-request':
+                    this.send({
+                        type: 'approve-request',
+                        targetSessionId: message.targetSessionId
+                    } as ApproveRequestMessage);
+                    break;
+                case 'reject-request':
+                    this.send({
+                        type: 'reject-request',
+                        targetSessionId: message.targetSessionId
+                    } as RejectRequestMessage);
+                    break;
+                case 'kick-user':
+                    this.send({
+                        type: 'kick-user',
+                        targetSessionId: message.targetSessionId
+                    } as KickUserMessage);
                     break;
             }
         });
@@ -465,10 +483,19 @@ export class CollaborationClient {
             case 'welcome':
                 this.sessionId = msg.sessionId;
                 this.webviewPanel.webview.postMessage({ type: 'my-session-id', sessionId: msg.sessionId });
+
+                // If we started the server, claim host status
+                if (this.server) {
+                    this.server.setHost(this.sessionId!);
+                    this.webviewPanel.webview.postMessage({ type: 'is-host', value: true });
+                }
                 break;
             case 'user-joined':
             case 'user-left':
             case 'user-list':
+                this.webviewPanel.webview.postMessage(msg);
+                break;
+            case 'user-request': // Notify host of pending user
                 this.webviewPanel.webview.postMessage(msg);
                 break;
             case 'chat-message':

@@ -4,7 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import {
     MessageType, BaseMessage, JoinMessage, TextOperationMessage,
     CursorSelectionMessage, WebRTCSignalMessage, FileCreateMessage,
-    FileDeleteMessage, FileInitMessage, ChatMessage, UserListMessage, UserLeftMessage
+    FileDeleteMessage, FileInitMessage, ChatMessage, UserListMessage, UserLeftMessage,
+    UserRequestMessage, ApproveRequestMessage, RejectRequestMessage, KickUserMessage
 } from '../common/messages';
 
 // OT types
@@ -15,6 +16,7 @@ interface Client {
     sessionId: string;
     username: string;
     color: string;
+    status: 'pending' | 'approved';
 }
 
 interface DocumentState {
@@ -29,6 +31,7 @@ export class CollaborationServer {
     private wss: WebSocketServer;
     private clients: Map<string, Client> = new Map();
     private documents: Map<string, DocumentState> = new Map(); // filepath -> state
+    private hostSessionId: string | null = null;
 
     constructor(server?: http.Server, port?: number) {
         if (server) {
@@ -41,6 +44,15 @@ export class CollaborationServer {
 
         this.wss.on('connection', (ws) => this.handleConnection(ws));
         console.log(`Collab Server started.`);
+    }
+
+    public setHost(sessionId: string) {
+        this.hostSessionId = sessionId;
+        console.log(`Host set to: ${sessionId}`);
+        const client = this.clients.get(sessionId);
+        if (client) {
+            client.status = 'approved';
+        }
     }
 
     private handleConnection(ws: WebSocket) {
@@ -72,46 +84,91 @@ export class CollaborationServer {
             console.log(`Connection closed: ${sessionId}`);
             const client = this.clients.get(sessionId);
             this.clients.delete(sessionId);
-            if (client) {
-                const leaveMsg: UserLeftMessage = {
-                    type: 'user-left',
-                    sessionId: sessionId,
-                    username: client.username
-                };
-                this.broadcast(ws, leaveMsg);
+
+            if (client && client.status === 'approved') {
+                 // Notify others they left
+                 this.broadcast(ws, {
+                     type: 'user-left',
+                     sessionId: sessionId,
+                     username: client.username
+                 } as any);
+            }
+
+            if (sessionId === this.hostSessionId) {
+                this.hostSessionId = null;
+                // If host leaves, maybe disconnect everyone or warn them?
             }
         });
     }
 
     private handleMessage(ws: WebSocket, message: BaseMessage, sessionId: string, color: string) {
+        // If client is pending, they can only send 'join' (or if they are the host claiming to be host)
+        // Actually, 'join' is the first thing they send.
+
+        // Host Override: If this is the Host session, allow commands even if status is pending (though setHost should fix status)
+        const isHost = (this.hostSessionId === sessionId);
+
+        const client = this.clients.get(sessionId);
+        if (client && client.status === 'pending' && message.type !== 'join') {
+            // Ignore other messages from pending users
+            return;
+        }
+
         switch (message.type) {
             case 'join':
                 const joinMsg = message as JoinMessage;
+                const status = (sessionId === this.hostSessionId) ? 'approved' : 'pending';
+
                 this.clients.set(sessionId, {
                     ws,
                     sessionId,
                     username: joinMsg.username,
-                    color
+                    color,
+                    status: status
                 });
-                console.log(`User ${joinMsg.username} joined.`);
+                console.log(`User ${joinMsg.username} joined. Status: ${status}`);
 
-                // Send current user list to the new user
-                const userList: UserListMessage = {
-                    type: 'user-list',
-                    users: Array.from(this.clients.values()).map(c => ({
-                        sessionId: c.sessionId,
-                        username: c.username,
-                        color: c.color
-                    }))
-                };
-                ws.send(JSON.stringify(userList));
+                if (status === 'approved') {
+                    this.approveClient(sessionId);
+                } else {
+                    // Notify Host
+                    if (this.hostSessionId) {
+                        const hostClient = this.clients.get(this.hostSessionId);
+                        if (hostClient && hostClient.ws.readyState === WebSocket.OPEN) {
+                            const reqMsg: UserRequestMessage = {
+                                type: 'user-request',
+                                username: joinMsg.username,
+                                sessionId: sessionId
+                            };
+                            hostClient.ws.send(JSON.stringify(reqMsg));
+                        }
+                    } else {
+                        // No host? Maybe this IS the host but we haven't called setHost yet.
+                        // Wait for setHost to be called by extension.
+                        // If it's a remote user and no host is online, they just hang in pending.
+                    }
+                }
+                break;
 
-                // Broadcast user-joined for WebRTC discovery and UI
-                this.broadcast(ws, {
-                    type: 'user-joined',
-                    sessionId: sessionId,
-                    username: joinMsg.username
-                } as any);
+            case 'approve-request':
+                if (isHost) {
+                    const approveMsg = message as ApproveRequestMessage;
+                    this.approveClient(approveMsg.targetSessionId);
+                }
+                break;
+
+            case 'reject-request':
+                if (isHost) {
+                    const rejectMsg = message as RejectRequestMessage;
+                    this.rejectClient(rejectMsg.targetSessionId);
+                }
+                break;
+
+            case 'kick-user':
+                if (isHost) {
+                    const kickMsg = message as KickUserMessage;
+                    this.rejectClient(kickMsg.targetSessionId);
+                }
                 break;
 
             case 'chat-message':
@@ -119,7 +176,6 @@ export class CollaborationServer {
                 // Add timestamp and broadcast
                 chatMsg.timestamp = Date.now();
                 // Ensure correct username/color from server state
-                const client = this.clients.get(sessionId);
                 if (client) {
                     chatMsg.username = client.username;
                     chatMsg.color = client.color;
@@ -137,10 +193,9 @@ export class CollaborationServer {
                 // Simply broadcast to others
                 const cursorMsg = message as CursorSelectionMessage;
                 // Attach metadata so clients know who it is
-                const selectionClient = this.clients.get(sessionId);
-                if (selectionClient) {
-                    cursorMsg.color = selectionClient.color;
-                    cursorMsg.username = selectionClient.username;
+                if (client) {
+                    cursorMsg.color = client.color;
+                    cursorMsg.username = client.username;
                     this.broadcast(ws, cursorMsg);
                 }
                 break;
@@ -168,6 +223,53 @@ export class CollaborationServer {
                  // If Server has no content, maybe Client sends "FileInit" with their content.
                  this.handleFileInit(ws, message as FileInitMessage);
                  break;
+        }
+    }
+
+    private approveClient(sessionId: string) {
+        const client = this.clients.get(sessionId);
+        if (!client) { return; }
+
+        client.status = 'approved';
+
+        // Send current user list to the new user
+        const userList: UserListMessage = {
+            type: 'user-list',
+            users: Array.from(this.clients.values())
+                .filter(c => c.status === 'approved')
+                .map(c => ({
+                    sessionId: c.sessionId,
+                    username: c.username,
+                    color: c.color
+                }))
+        };
+        client.ws.send(JSON.stringify(userList));
+
+        // Broadcast user-joined
+        this.broadcast(client.ws, {
+            type: 'user-joined',
+            sessionId: sessionId,
+            username: client.username
+        } as any);
+
+        // Sync open files?
+        // Client will request init if needed, or we rely on broadcast.
+    }
+
+    private rejectClient(sessionId: string) {
+        const client = this.clients.get(sessionId);
+        if (client) {
+            client.ws.close();
+            this.clients.delete(sessionId);
+
+            if (client.status === 'approved') {
+                 // Notify others they left
+                 this.broadcast(client.ws, {
+                     type: 'user-left',
+                     sessionId: sessionId,
+                     username: client.username
+                 } as any);
+            }
         }
     }
 
@@ -274,7 +376,7 @@ export class CollaborationServer {
     private broadcast(senderWs: WebSocket, msg: BaseMessage) {
         const data = JSON.stringify(msg);
         this.clients.forEach((client) => {
-            if (client.ws !== senderWs && client.ws.readyState === WebSocket.OPEN) {
+            if (client.ws !== senderWs && client.ws.readyState === WebSocket.OPEN && client.status === 'approved') {
                 client.ws.send(data);
             }
         });

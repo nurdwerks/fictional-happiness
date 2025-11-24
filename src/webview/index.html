@@ -19,9 +19,15 @@
         /* Participant List Styles */
         .participant-item { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; padding: 3px; border-radius: 3px; }
         .participant-item:hover { background-color: var(--vscode-list-hoverBackground); }
-        .follow-btn { padding: 2px 6px; font-size: 0.8em; width: auto; margin-left: 5px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
-        .follow-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
+        .follow-btn, .kick-btn, .approve-btn, .reject-btn { padding: 2px 6px; font-size: 0.8em; width: auto; margin-left: 5px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; cursor: pointer;}
+        .follow-btn:hover, .kick-btn:hover, .approve-btn:hover, .reject-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
         .follow-btn.following { background: var(--vscode-statusBarItem-warningBackground); color: var(--vscode-statusBarItem-warningForeground); }
+
+        .kick-btn { background: var(--vscode-errorForeground); color: white; }
+        .approve-btn { background: var(--vscode-testing-iconPassed); color: white; }
+        .reject-btn { background: var(--vscode-testing-iconFailed); color: white; }
+
+        .pending-request { margin-bottom: 10px; padding: 5px; background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); border-radius: 3px; }
 
         /* Terminal Styles */
         #terminal-output { font-family: monospace; white-space: pre-wrap; height: 150px; overflow-y: auto; background: var(--vscode-terminal-background); color: var(--vscode-terminal-foreground); border: 1px solid var(--vscode-panel-border); padding: 5px; font-size: 0.9em; }
@@ -48,6 +54,11 @@
                 <button id="btn-join-server">Join Server</button>
             </div>
             <button id="btn-disconnect" style="display: none; background: var(--vscode-errorForeground);">Disconnect</button>
+        </div>
+
+        <div class="section" id="pending-section" style="display: none;">
+            <h3>Pending Requests</h3>
+            <div id="pending-list"></div>
         </div>
 
         <div class="section" id="voice-section" style="display: none;">

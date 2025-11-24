@@ -46,27 +46,4 @@ const webviewConfig = {
   ]
 };
 
-const serverConfig = {
-  name: 'server',
-  target: 'node',
-  mode: 'development',
-  entry: './src/server/cli.ts',
-  output: {
-    path: path.resolve(__dirname, 'dist'),
-    filename: 'server.js', // Standalone server executable script
-  },
-  resolve: { extensions: ['.ts', '.js'] },
-  module: {
-    rules: [{ test: /\.ts$/, exclude: /node_modules/, use: 'ts-loader' }]
-  },
-  devtool: 'source-map',
-  externals: {
-      // Standalone server should bundle dependencies or not?
-      // Usually CLI tools bundle everything except maybe native modules.
-      // If we don't bundle, the user needs node_modules.
-      // For simplicity/portability, let's bundle everything.
-      // But 'ws' might be tricky. Let's try bundling.
-  }
-};
-
-module.exports = [extensionConfig, webviewConfig, serverConfig];
+module.exports = [extensionConfig, webviewConfig];
