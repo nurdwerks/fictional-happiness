@@ -2,7 +2,7 @@
   "name": "collab-code",
   "displayName": "Collab Code OT",
   "description": "Operational Transformation collaboration plugin with WebRTC voice chat.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "jules",
   "repository": {
     "type": "git",
