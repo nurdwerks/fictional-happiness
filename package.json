@@ -52,6 +52,10 @@
       {
         "command": "collabCode.addReference",
         "title": "Add Code Reference to Chat"
+      },
+      {
+        "command": "collabCode.runSharedCommand",
+        "title": "Run Shared Command (Broadcast Output)"
       }
     ],
     "menus": {
@@ -60,6 +64,13 @@
           "command": "collabCode.addReference",
           "group": "collab"
         }
+      ],
+      "view/title": [
+          {
+              "command": "collabCode.runSharedCommand",
+              "when": "view == collabCodeView",
+              "group": "navigation"
+          }
       ]
     }
   },
