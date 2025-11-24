@@ -33,6 +33,9 @@ export class CollaborationServer {
     private documents: Map<string, DocumentState> = new Map(); // filepath -> state
     private hostSessionId: string | null = null;
 
+    // Event hook for extension to populate files
+    public onClientApproved?: (sessionId: string) => void;
+
     constructor(server?: http.Server, port?: number) {
         if (server) {
             this.wss = new WebSocketServer({ server });
@@ -52,6 +55,13 @@ export class CollaborationServer {
         const client = this.clients.get(sessionId);
         if (client) {
             client.status = 'approved';
+        }
+    }
+
+    public sendToClient(sessionId: string, msg: BaseMessage) {
+        const client = this.clients.get(sessionId);
+        if (client && client.ws.readyState === WebSocket.OPEN) {
+            client.ws.send(JSON.stringify(msg));
         }
     }
 
@@ -252,8 +262,21 @@ export class CollaborationServer {
             username: client.username
         } as any);
 
-        // Sync open files?
-        // Client will request init if needed, or we rely on broadcast.
+        // Notify Host extension to send full file list
+        if (this.onClientApproved) {
+            this.onClientApproved(sessionId);
+        }
+
+        // Send currently known in-memory docs as fallback/fast-path
+        this.documents.forEach((doc, filepath) => {
+             const msg: FileInitMessage = {
+                 type: 'file-init',
+                 file: filepath,
+                 content: doc.content,
+                 version: doc.version
+             };
+             client.ws.send(JSON.stringify(msg));
+        });
     }
 
     private rejectClient(sessionId: string) {
