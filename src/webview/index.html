@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collab Code</title>
+    <style>
+        body { font-family: sans-serif; padding: 10px; color: var(--vscode-foreground); background-color: var(--vscode-editor-background); }
+        .section { margin-bottom: 20px; padding: 10px; border: 1px solid var(--vscode-widget-border); border-radius: 5px; }
+        h3 { margin-top: 0; }
+        input { display: block; width: 100%; margin-bottom: 10px; padding: 5px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); }
+        button { width: 100%; padding: 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer; }
+        button:hover { background: var(--vscode-button-hoverBackground); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .status { font-weight: bold; margin-bottom: 10px; }
+        .status.connected { color: green; }
+        .status.disconnected { color: red; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="status disconnected" id="status-display">Disconnected</div>
+
+        <div class="section" id="identity-section">
+             <h3>Identity</h3>
+             <div id="username-display">Loading git identity...</div>
+        </div>
+
+        <div class="section" id="connection-section">
+            <h3>Connection</h3>
+            <div id="start-server-ui">
+                <input type="number" id="local-port" placeholder="Port (e.g., 3000)" value="3000">
+                <button id="btn-start-server">Start Local Server</button>
+            </div>
+            <div style="text-align: center; margin: 10px 0;">OR</div>
+            <div id="join-server-ui">
+                <input type="text" id="remote-address" placeholder="ws://localhost:3000" value="ws://localhost:3000">
+                <button id="btn-join-server">Join Server</button>
+            </div>
+            <button id="btn-disconnect" style="display: none; background: var(--vscode-errorForeground);">Disconnect</button>
+        </div>
+
+        <div class="section" id="voice-section" style="display: none;">
+            <h3>Voice Chat</h3>
+            <label><input type="checkbox" id="voice-toggle"> Enable Voice Chat</label>
+            <div id="voice-status">Voice: Off</div>
+            <details>
+                <summary>STUN/TURN Settings</summary>
+                <textarea id="ice-servers" rows="4" style="width: 100%; background: var(--vscode-input-background); color: var(--vscode-input-foreground);">[{"urls":"stun:stun.l.google.com:19302"}]</textarea>
+            </details>
+        </div>
+    </div>
+    <!-- Script will be injected by VS Code or loaded via webpack bundle -->
+    <script src="webview.js"></script>
+</body>
+</html>
