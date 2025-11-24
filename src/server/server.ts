@@ -29,27 +29,126 @@ const COLORS = ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'
 
 export class CollaborationServer {
     private wss: WebSocketServer;
+    private httpServer: http.Server | undefined;
     private clients: Map<string, Client> = new Map();
     private documents: Map<string, DocumentState> = new Map(); // filepath -> state
     private hostSessionId: string | null = null;
     private allowExternalConnections = false;
+    private wsEnabled = false; // WebSocket disabled by default
 
     // Event hook for extension to populate files
     public onClientApproved?: (sessionId: string) => void;
+    public onPortChange?: (newPort: number) => void;
     private logger?: (msg: string) => void;
+    private port: number | undefined;
 
     constructor(server?: http.Server, port?: number, logger?: (msg: string) => void) {
         this.logger = logger;
+        this.port = port;
+        this.wss = new WebSocketServer({ noServer: true });
+
         if (server) {
-            this.wss = new WebSocketServer({ server });
+            this.httpServer = server;
         } else if (port) {
-            this.wss = new WebSocketServer({ port });
+            this.httpServer = http.createServer((req, res) => this.handleRestRequest(req, res));
+            this.httpServer.listen(port);
         } else {
             throw new Error("Either server or port must be provided");
         }
 
+        this.httpServer.on('upgrade', (request, socket, head) => {
+            if (!this.wsEnabled) {
+                socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+                socket.destroy();
+                return;
+            }
+            this.wss.handleUpgrade(request, socket, head, (ws) => {
+                this.wss.emit('connection', ws, request);
+            });
+        });
+
         this.wss.on('connection', (ws, req) => this.handleConnection(ws, req));
-        this.log(`Collab Server started.`);
+        this.log(`Collab Server started (WS Enabled: ${this.wsEnabled})`);
+    }
+
+    private handleRestRequest(req: http.IncomingMessage, res: http.ServerResponse) {
+        // Set CORS headers to allow Webview to access
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+        if (req.method === 'OPTIONS') {
+            res.writeHead(204);
+            res.end();
+            return;
+        }
+
+        const url = new URL(req.url || '', `http://${req.headers.host}`);
+
+        if (req.method === 'POST' && url.pathname === '/start') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', () => {
+                try {
+                    const data = JSON.parse(body || '{}');
+                    const requestedPort = data.port ? parseInt(data.port) : this.port;
+
+                    if (requestedPort && requestedPort !== this.port) {
+                        // Port change requested
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ message: 'Restarting on new port', newPort: requestedPort }), () => {
+                            if (this.onPortChange) {
+                                this.onPortChange(requestedPort);
+                            }
+                        });
+                    } else {
+                        // Enable WS on current port
+                        this.wsEnabled = true;
+                        this.enableExternalConnections();
+                        this.log("WebSocket enabled via REST");
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ status: 'started', port: this.port }));
+                    }
+                } catch (e) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: 'Invalid JSON' }));
+                }
+            });
+            return;
+        }
+
+        if (req.method === 'GET') {
+            if (url.pathname === '/status') {
+                const status = {
+                    clientCount: this.clients.size,
+                    hostSessionId: this.hostSessionId,
+                    isHostOnline: this.hostSessionId ? this.clients.has(this.hostSessionId) : false,
+                    allowExternalConnections: this.allowExternalConnections,
+                    documents: this.documents.size,
+                    wsEnabled: this.wsEnabled,
+                    port: this.port
+                };
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(status));
+                return;
+            }
+
+            if (url.pathname === '/clients') {
+                const clientList = Array.from(this.clients.values()).map(c => ({
+                    sessionId: c.sessionId,
+                    username: c.username,
+                    color: c.color,
+                    status: c.status,
+                    isHost: c.sessionId === this.hostSessionId
+                }));
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(clientList));
+                return;
+            }
+        }
+
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not Found');
     }
 
     public enableExternalConnections() {
@@ -443,5 +542,8 @@ export class CollaborationServer {
 
     public close() {
         this.wss.close();
+        if (this.httpServer) {
+            this.httpServer.close();
+        }
     }
 }

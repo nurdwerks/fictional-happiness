@@ -45,6 +45,12 @@ const chatMessages = document.getElementById('chat-messages')!;
 const chatInput = document.getElementById('chat-input') as HTMLInputElement;
 const btnSendChat = document.getElementById('btn-send-chat') as HTMLButtonElement;
 
+// REST Status UI
+const serverStatusSection = document.getElementById('server-status-section')!;
+const btnCheckStatus = document.getElementById('btn-check-status') as HTMLButtonElement;
+const btnListClients = document.getElementById('btn-list-clients') as HTMLButtonElement;
+const serverStatusOutput = document.getElementById('server-status-output')!;
+
 // Terminal UI
 const terminalSection = document.getElementById('terminal-section')!;
 const terminalOutput = document.getElementById('terminal-output')!;
@@ -86,13 +92,13 @@ function updateState(connected: boolean) {
         if (isExternalConnection) {
             startServerUI.style.display = 'none';
             joinServerUI.style.display = 'none';
-            if (divider) divider.style.display = 'none';
+            if (divider) {divider.style.display = 'none';}
             btnDisconnect.style.display = 'block';
         } else {
             // Connected locally. Show Start Host (to enable external). Hide Join.
             startServerUI.style.display = 'block';
             joinServerUI.style.display = 'none';
-            if (divider) divider.style.display = 'none';
+            if (divider) {divider.style.display = 'none';}
             btnDisconnect.style.display = 'none'; // Can't disconnect from local server easily or maybe we shouldn't?
             // Actually, if we disconnect local, we kill the server connection.
             // Let's allow disconnect if user wants to stop everything?
@@ -104,12 +110,13 @@ function updateState(connected: boolean) {
         participantsSection.style.display = 'block';
         chatSection.style.display = 'block';
         terminalSection.style.display = 'block';
+        serverStatusSection.style.display = 'block';
 
     } else {
         // Disconnected
         startServerUI.style.display = 'block';
         joinServerUI.style.display = 'block';
-        if (divider) divider.style.display = 'block';
+        if (divider) {divider.style.display = 'block';}
         btnDisconnect.style.display = 'none';
 
         voiceSection.style.display = 'none';
@@ -117,6 +124,7 @@ function updateState(connected: boolean) {
         chatSection.style.display = 'none';
         terminalSection.style.display = 'none';
         pendingSection.style.display = 'none';
+        serverStatusSection.style.display = 'none';
 
         stopVoice();
         voiceToggle.checked = false;
@@ -134,12 +142,74 @@ function updateState(connected: boolean) {
 // IMPORTANT: ID will be changed to btn-start-host in HTML
 const btnStartHost = document.getElementById('btn-start-server') as HTMLButtonElement;
 
-btnStartHost.addEventListener('click', () => {
-    // We are likely already connected locally.
-    // Sending startHost enables external connections.
-    const port = parseInt(inputPort.value);
-    vscode.postMessage({ command: 'startHost', port });
-    isExternalConnection = false;
+btnStartHost.addEventListener('click', async () => {
+    const port = inputPort.value ? parseInt(inputPort.value) : 3000;
+
+    // Call REST API to start/enable host
+    try {
+        // We use getRestBaseUrl() which defaults to localhost:3000 (or whatever port input has if we updated it manually?)
+        // Wait, if we are starting the host, we must talk to the ALREADY RUNNING server.
+        // The identity message gave us the default port. We should probably try that first if input is different?
+        // But if the server is running on defaultPort, and we request newPort, we send to defaultPort.
+
+        // Logic: Try to call /start on the *current* assumption of where server is.
+        // If we haven't connected, we assume localhost:3000 (or whatever identity said).
+        // Since we can't easily know the *actual* running port if it differs from inputPort without checking identity again,
+        // we will assume `inputAddress` placeholder or `defaultPort` logic.
+
+        // For simplicity, let's assume the server is running on the port specified in `inputPort` (if it was pre-filled)
+        // OR we should try the default port.
+
+        // Actually, if the user changes the port in input, they want to start on THAT port.
+        // But we have to send the command to the OLD port.
+        // This is tricky. The UI doesn't track "old port".
+        // However, usually `inputPort` is 3000.
+        // Let's try fetching from localhost:3000 (default) if fetch to inputPort fails?
+        // Or just fetch to `getRestBaseUrl()` which derives from `inputPort`.
+        // If the server is ALREADY on inputPort, it works.
+        // If server is on 3000 and user types 4000, `getRestBaseUrl` returns localhost:4000. Fetch fails.
+
+        // We need to know the *control* port.
+        // Let's try localhost:3000 (hardcoded fallback) if the derived URL fails?
+        // Or better: `identity` message populated `inputPort` with `defaultPort`.
+        // If user changed it, we might be in trouble.
+        // But we can't solve everything. Let's assume user calls it on the correct port or we try the default.
+
+        let url = `${getRestBaseUrl()}/start`;
+
+        // If request fails, maybe server is on default 3000?
+
+        const body = JSON.stringify({ port });
+
+        let res;
+        try {
+            res = await fetch(url, { method: 'POST', body });
+        } catch (e) {
+            // If failed, retry with localhost:3000 just in case user changed port input but server is still on 3000
+            if (inputPort.value !== '3000') {
+                 res = await fetch(`http://localhost:3000/start`, { method: 'POST', body });
+            } else {
+                throw e;
+            }
+        }
+
+        if (res && res.ok) {
+            const data = await res.json();
+            if (data.newPort) {
+                inputPort.value = data.newPort;
+                // Wait for server restart?
+                await new Promise(r => setTimeout(r, 1000));
+            }
+            // Now connect WebSocket
+            const wsUrl = `ws://localhost:${inputPort.value}`;
+            vscode.postMessage({ command: 'joinServer', address: wsUrl });
+            isExternalConnection = false;
+        } else {
+            alert('Failed to start host: ' + (res ? res.statusText : 'Network Error'));
+        }
+    } catch (e) {
+        alert(`Failed to call start endpoint: ${(e as any).message}`);
+    }
 });
 
 btnJoin.addEventListener('click', () => {
@@ -166,6 +236,49 @@ btnSendChat.addEventListener('click', () => {
     if (text) {
         vscode.postMessage({ command: 'chat-message', text });
         chatInput.value = '';
+    }
+});
+
+function getRestBaseUrl() {
+    let baseUrl = '';
+    if (isExternalConnection) {
+        // inputAddress.value is ws(s)://...
+        baseUrl = inputAddress.value.replace(/^ws/, 'http');
+    } else {
+        // Localhost: check inputPort (if we started it) or defaultPort logic
+        const port = inputPort.value || '3000';
+        baseUrl = `http://localhost:${port}`;
+    }
+    // Remove trailing slash if present
+    if (baseUrl.endsWith('/')) {
+        baseUrl = baseUrl.slice(0, -1);
+    }
+    return baseUrl;
+}
+
+btnCheckStatus.addEventListener('click', async () => {
+    try {
+        const url = `${getRestBaseUrl()}/status`;
+        serverStatusOutput.textContent = `Fetching ${url}...`;
+        const res = await fetch(url);
+        if (!res.ok) { throw new Error(`Status ${res.status}`); }
+        const data = await res.json();
+        serverStatusOutput.textContent = JSON.stringify(data, null, 2);
+    } catch (e) {
+        serverStatusOutput.textContent = `Error: ${(e as any).message}`;
+    }
+});
+
+btnListClients.addEventListener('click', async () => {
+    try {
+        const url = `${getRestBaseUrl()}/clients`;
+        serverStatusOutput.textContent = `Fetching ${url}...`;
+        const res = await fetch(url);
+        if (!res.ok) { throw new Error(`Status ${res.status}`); }
+        const data = await res.json();
+        serverStatusOutput.textContent = JSON.stringify(data, null, 2);
+    } catch (e) {
+        serverStatusOutput.textContent = `Error: ${(e as any).message}`;
     }
 });
 
