@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
     MessageType, BaseMessage, JoinMessage, TextOperationMessage,
     CursorSelectionMessage, WebRTCSignalMessage, FileCreateMessage,
-    FileDeleteMessage, FileInitMessage
+    FileDeleteMessage, FileInitMessage, ChatMessage, UserListMessage, UserLeftMessage
 } from '../common/messages';
 
 // OT types
@@ -70,8 +70,16 @@ export class CollaborationServer {
 
         ws.on('close', () => {
             console.log(`Connection closed: ${sessionId}`);
+            const client = this.clients.get(sessionId);
             this.clients.delete(sessionId);
-            // Broadcast disconnect?
+            if (client) {
+                const leaveMsg: UserLeftMessage = {
+                    type: 'user-left',
+                    sessionId: sessionId,
+                    username: client.username
+                };
+                this.broadcast(ws, leaveMsg);
+            }
         });
     }
 
@@ -87,12 +95,38 @@ export class CollaborationServer {
                 });
                 console.log(`User ${joinMsg.username} joined.`);
 
-                // Broadcast user-joined for WebRTC discovery
+                // Send current user list to the new user
+                const userList: UserListMessage = {
+                    type: 'user-list',
+                    users: Array.from(this.clients.values()).map(c => ({
+                        sessionId: c.sessionId,
+                        username: c.username,
+                        color: c.color
+                    }))
+                };
+                ws.send(JSON.stringify(userList));
+
+                // Broadcast user-joined for WebRTC discovery and UI
                 this.broadcast(ws, {
                     type: 'user-joined',
                     sessionId: sessionId,
                     username: joinMsg.username
                 } as any);
+                break;
+
+            case 'chat-message':
+                const chatMsg = message as ChatMessage;
+                // Add timestamp and broadcast
+                chatMsg.timestamp = Date.now();
+                // Ensure correct username/color from server state
+                const client = this.clients.get(sessionId);
+                if (client) {
+                    chatMsg.username = client.username;
+                    chatMsg.color = client.color;
+                    this.broadcast(ws, chatMsg);
+                    // Also echo back to sender so they see it confirmed
+                    ws.send(JSON.stringify(chatMsg));
+                }
                 break;
 
             case 'text-operation':
@@ -103,10 +137,10 @@ export class CollaborationServer {
                 // Simply broadcast to others
                 const cursorMsg = message as CursorSelectionMessage;
                 // Attach metadata so clients know who it is
-                const client = this.clients.get(sessionId);
-                if (client) {
-                    cursorMsg.color = client.color;
-                    cursorMsg.username = client.username;
+                const selectionClient = this.clients.get(sessionId);
+                if (selectionClient) {
+                    cursorMsg.color = selectionClient.color;
+                    cursorMsg.username = selectionClient.username;
                     this.broadcast(ws, cursorMsg);
                 }
                 break;
@@ -138,7 +172,7 @@ export class CollaborationServer {
     }
 
     private handleTextOperation(senderWs: WebSocket, msg: TextOperationMessage) {
-        if (!msg.file) return;
+        if (!msg.file) {return;}
 
         let doc = this.documents.get(msg.file);
         if (!doc) {
@@ -216,7 +250,7 @@ export class CollaborationServer {
     }
 
     private handleFileInit(ws: WebSocket, msg: FileInitMessage) {
-        if (!msg.file) return;
+        if (!msg.file) {return;}
         if (!this.documents.has(msg.file)) {
             // If server doesn't have it, accept client's version
             this.documents.set(msg.file, {

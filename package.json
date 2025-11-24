@@ -65,6 +65,8 @@
     "@types/uuid": "^9.0.0",
     "@types/vscode": "^1.90.0",
     "@types/ws": "^8.5.0",
+    "@typescript-eslint/eslint-plugin": "^8.47.0",
+    "@typescript-eslint/parser": "^8.47.0",
     "copy-webpack-plugin": "^11.0.0",
     "ts-loader": "^9.0.0",
     "typescript": "^5.0.0",
