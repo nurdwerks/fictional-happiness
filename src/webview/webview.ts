@@ -5,6 +5,11 @@ declare function acquireVsCodeApi(): any;
 
 const vscode = acquireVsCodeApi();
 
+// Retry mechanism for connection
+const sendReady = () => vscode.postMessage({ command: 'ready' });
+sendReady(); // Send immediately
+const readyInterval = setInterval(sendReady, 1000);
+
 let isConnected = false;
 let isHost = false; // Track if we are the host
 let localStream: MediaStream | null = null;
@@ -265,6 +270,7 @@ window.addEventListener('message', event => {
     const message = event.data;
     switch (message.type) {
         case 'identity':
+            clearInterval(readyInterval);
             username = message.username;
             usernameDisplay.textContent = username ? `Logged in as: ${username}` : 'Error: git config user.name not set. Set "collabCode.username" in settings or git config.';
 
@@ -666,5 +672,3 @@ async function initiateConnection(targetId: string) {
     });
 }
 
-// Notify extension that webview is ready
-vscode.postMessage({ command: 'ready' });

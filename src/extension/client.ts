@@ -163,6 +163,7 @@ export class CollaborationClient {
         this.webviewPanel.webview.onDidReceiveMessage(async message => {
             switch (message.command) {
                 case 'ready':
+                    this.outputChannel.appendLine(`[Webview] Ready received`);
                     this.resolveWebviewReady();
                     break;
                 case 'startServer':
