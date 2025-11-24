@@ -56,9 +56,11 @@ export class CollaborationClient {
     private flashInterval: NodeJS.Timeout | undefined;
     private isFlashing = false;
 
+    // WebviewPanel is now optional/late-bound
+    private webviewPanel?: vscode.WebviewPanel;
+
     constructor(
         private context: vscode.ExtensionContext,
-        private webviewPanel: vscode.WebviewPanel,
         private gitService: GitService
     ) {
         this.outputChannel = vscode.window.createOutputChannel("Collab Code Server");
@@ -78,12 +80,16 @@ export class CollaborationClient {
         this.statusBarItem.command = 'collabCodeView.focus';
         this.context.subscriptions.push(this.statusBarItem);
 
-        this.registerWebviewListeners();
         this.registerEditorListeners();
         this.initializeOpenEditors();
 
-        // Send initial identity to webview
-        this.sendIdentity();
+        // Start Local Server Immediately
+        const config = vscode.workspace.getConfiguration('collabCode');
+        const defaultPort = config.get('defaultPort') as number || 3000;
+        this.startHostServer(defaultPort).then(() => {
+             // Connect locally
+             this.connect(`ws://localhost:${defaultPort}`);
+        });
 
         // Listen for configuration changes
         vscode.workspace.onDidChangeConfiguration(e => {
@@ -121,6 +127,9 @@ export class CollaborationClient {
 
     private async sendIdentity() {
         await this.webviewReadyPromise;
+        if (!this.webviewPanel) { return; }
+        const panel = this.webviewPanel;
+
         // Also send configuration
         const config = vscode.workspace.getConfiguration('collabCode');
         const iceServers = config.get('stunServers') || ["stun:stun.l.google.com:19302"];
@@ -133,7 +142,7 @@ export class CollaborationClient {
         }
         this.myUsername = username;
 
-        this.webviewPanel.webview.postMessage({
+        panel.webview.postMessage({
             type: 'identity',
             username: this.myUsername,
             iceServers: iceServers,
@@ -142,36 +151,59 @@ export class CollaborationClient {
 
         // If connected, restore state
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-             this.webviewPanel.webview.postMessage({ type: 'connected' });
+             panel.webview.postMessage({ type: 'connected' });
              if (this.sessionId) {
-                  this.webviewPanel.webview.postMessage({ type: 'my-session-id', sessionId: this.sessionId });
+                  panel.webview.postMessage({ type: 'my-session-id', sessionId: this.sessionId });
              }
              if (this.server) { // If host
-                  this.webviewPanel.webview.postMessage({ type: 'is-host', value: true });
+                  panel.webview.postMessage({ type: 'is-host', value: true });
              }
              if (this.lastUserList.length > 0) {
-                  this.webviewPanel.webview.postMessage({ type: 'user-list', users: this.lastUserList });
+                  panel.webview.postMessage({ type: 'user-list', users: this.lastUserList });
              }
              // Send pending requests
              this.pendingRequests.forEach(msg => {
-                 this.webviewPanel.webview.postMessage(msg);
+                 panel.webview.postMessage(msg);
              });
         }
     }
 
     private registerWebviewListeners() {
+        if (!this.webviewPanel) { return; }
         this.webviewPanel.webview.onDidReceiveMessage(async message => {
             switch (message.command) {
                 case 'ready':
                     this.outputChannel.appendLine(`[Webview] Ready received`);
                     this.resolveWebviewReady();
                     break;
-                case 'startServer':
-                    await this.startLocalServer(message.port);
-                    this.connect(`ws://localhost:${message.port}`);
+                case 'startHost': // Renamed from startServer
+                    // User wants to open for external connections
+                    if (this.server) {
+                        this.server.enableExternalConnections();
+                        vscode.window.showInformationMessage("Host is now open for external connections.");
+                        // Maybe verify we are connected
+                        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                             const config = vscode.workspace.getConfiguration('collabCode');
+                             const port = config.get('defaultPort') || 3000;
+                             this.connect(`ws://localhost:${port}`);
+                        }
+                    } else {
+                         // Should be started, but if not:
+                         const port = message.port || 3000;
+                         await this.startHostServer(port);
+                         this.connect(`ws://localhost:${port}`);
+                         if (this.server) {
+                            (this.server as any).enableExternalConnections();
+                        }
+                    }
                     break;
                 case 'joinServer':
-                    this.handleJoinRequest(message.address);
+                    // Disconnect local if connected?
+                    // Actually, if we join another server, we should disconnect current.
+                    this.disconnect(true); // true = keep server running? No, if we join, we stop being host (conceptually) or just disconnect our client.
+                    // If we are host, we probably shouldn't join another without stopping host?
+                    // But for now, just disconnect client.
+                    this.connect(message.address);
                     break;
                 case 'disconnect':
                     this.disconnect();
@@ -419,7 +451,7 @@ export class CollaborationClient {
             data: data
         };
         this.send(msg);
-        this.webviewPanel.webview.postMessage(msg);
+        this.webviewPanel?.webview.postMessage(msg);
     }
 
     private generateOp(shadow: string, change: vscode.TextDocumentContentChangeEvent): any[] {
@@ -442,7 +474,7 @@ export class CollaborationClient {
         return ops;
     }
 
-    private async startLocalServer(port: number) {
+    private async startHostServer(port: number) {
         this.outputChannel.show(true);
         this.server = new CollaborationServer(undefined, port, (msg) => {
             this.outputChannel.appendLine(`[${new Date().toLocaleTimeString()}] ${msg}`);
@@ -450,6 +482,7 @@ export class CollaborationClient {
         this.server.onClientApproved = (targetSessionId) => {
             this.syncWorkspaceToClient(targetSessionId);
         };
+        // By default, external connections are DISABLED in server.ts
     }
 
     private async syncWorkspaceToClient(targetSessionId: string) {
@@ -475,12 +508,15 @@ export class CollaborationClient {
     }
 
     public async connect(address: string) {
-        await this.webviewReadyPromise;
+        // Only await webview if we actually need to send something immediately that matters?
+        // But connect() sends identity and state.
+        // If we are headless (webview not open yet), we still want to connect to server to get state?
+        // Actually, connect() is for the *client* side of the extension to talk to the server.
 
         this.ws = new WebSocket(address);
 
         this.ws.on('open', () => {
-            this.webviewPanel.webview.postMessage({ type: 'connected' });
+            if (this.webviewPanel) { this.webviewPanel.webview.postMessage({ type: 'connected' }); }
             const joinMsg: JoinMessage = {
                 type: 'join',
                 username: this.myUsername || 'Anonymous'
@@ -506,7 +542,7 @@ export class CollaborationClient {
         });
 
         this.ws.on('close', () => {
-            this.webviewPanel.webview.postMessage({ type: 'disconnected' });
+            if (this.webviewPanel) { this.webviewPanel.webview.postMessage({ type: 'disconnected' }); }
             this.stopFlashing();
             this.statusBarItem.hide();
         });
@@ -525,7 +561,7 @@ export class CollaborationClient {
                 this.updateRemoteCursor(msg as CursorSelectionMessage);
                 break;
             case 'webrtc-signal':
-                this.webviewPanel.webview.postMessage({
+                this.webviewPanel?.webview.postMessage({
                     type: 'webrtc-signal',
                     signal: (msg as WebRTCSignalMessage).signal,
                     senderId: msg.sessionId
@@ -542,32 +578,34 @@ export class CollaborationClient {
                 break;
             case 'welcome':
                 this.sessionId = msg.sessionId;
-                this.webviewPanel.webview.postMessage({ type: 'my-session-id', sessionId: msg.sessionId });
-                if (this.server && this.sessionId) {
-                    this.server.setHost(this.sessionId as string);
-                    this.webviewPanel.webview.postMessage({ type: 'is-host', value: true });
+                if (this.webviewPanel) {
+                    this.webviewPanel.webview.postMessage({ type: 'my-session-id', sessionId: msg.sessionId });
+                    if (this.server && this.sessionId) {
+                        this.server.setHost(this.sessionId as string);
+                        this.webviewPanel.webview.postMessage({ type: 'is-host', value: true });
+                    }
                 }
                 break;
             case 'user-list':
                 this.lastUserList = (msg as any).users || [];
-                this.webviewPanel.webview.postMessage(msg);
+                this.webviewPanel?.webview.postMessage(msg);
                 break;
             case 'user-joined':
             case 'user-left':
-                this.webviewPanel.webview.postMessage(msg);
+                this.webviewPanel?.webview.postMessage(msg);
                 break;
             case 'user-request': // Notify host of pending user
                 if (msg.sessionId) {
                     this.pendingRequests.set(msg.sessionId, msg);
                     this.startFlashing();
-                    this.webviewPanel.webview.postMessage(msg);
+                    this.webviewPanel?.webview.postMessage(msg);
                 }
                 break;
             case 'chat-message':
-                this.webviewPanel.webview.postMessage(msg);
+                this.webviewPanel?.webview.postMessage(msg);
                 break;
             case 'terminal-data':
-                this.webviewPanel.webview.postMessage(msg);
+                this.webviewPanel?.webview.postMessage(msg);
                 break;
         }
     }
@@ -851,16 +889,16 @@ export class CollaborationClient {
         }
     }
 
-    private disconnect() {
+    private disconnect(skipServer = false) {
         if (this.ws) {
             this.ws.close();
             this.ws = undefined;
         }
-        if (this.server) {
+        if (this.server && !skipServer) {
             this.server.close();
             this.server = undefined;
         }
-        this.webviewPanel.webview.postMessage({ type: 'disconnected' });
+        if (this.webviewPanel) { this.webviewPanel.webview.postMessage({ type: 'disconnected' }); }
         this.stopFlashing();
         this.statusBarItem.hide();
     }
