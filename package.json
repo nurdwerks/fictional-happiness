@@ -4,6 +4,10 @@
   "description": "Operational Transformation collaboration plugin with WebRTC voice chat.",
   "version": "0.0.1",
   "publisher": "jules",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nurdwerks/fictional-happiness.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
