@@ -12,6 +12,7 @@ const readyInterval = setInterval(sendReady, 1000);
 
 let isConnected = false;
 let isHost = false; // Track if we are the host
+let isExternalConnection = false; // Track if we joined externally
 let localStream: MediaStream | null = null;
 let username: string | null = null;
 let mySessionId: string | null = null; // Store my own session ID
@@ -22,7 +23,10 @@ const peers = new Map<string, RTCPeerConnection>();
 // UI Elements
 const statusDisplay = document.getElementById('status-display')!;
 const usernameDisplay = document.getElementById('username-display')!;
+// Renamed btn-start-server to btn-start-host logic
 const btnStart = document.getElementById('btn-start-server') as HTMLButtonElement;
+// Note: We'll rename the ID in HTML, but here we can keep variable name or change it.
+// Let's assume we update HTML ID to 'btn-start-host' and here too.
 const btnJoin = document.getElementById('btn-join-server') as HTMLButtonElement;
 const btnDisconnect = document.getElementById('btn-disconnect') as HTMLButtonElement;
 const inputPort = document.getElementById('local-port') as HTMLInputElement;
@@ -34,8 +38,8 @@ const iceServersInput = document.getElementById('ice-servers') as HTMLTextAreaEl
 
 const participantsSection = document.getElementById('participants-section')!;
 const participantsList = document.getElementById('participants-list')!;
-const pendingSection = document.getElementById('pending-section')!; // New
-const pendingList = document.getElementById('pending-list')!; // New
+const pendingSection = document.getElementById('pending-section')!;
+const pendingList = document.getElementById('pending-list')!;
 const chatSection = document.getElementById('chat-section')!;
 const chatMessages = document.getElementById('chat-messages')!;
 const chatInput = document.getElementById('chat-input') as HTMLInputElement;
@@ -73,24 +77,41 @@ function updateState(connected: boolean) {
     statusDisplay.className = connected ? 'status connected' : 'status disconnected';
     statusDisplay.textContent = connected ? 'Connected' : 'Disconnected';
 
+    const startServerUI = document.getElementById('start-server-ui')!;
+    const joinServerUI = document.getElementById('join-server-ui')!;
+    const divider = document.querySelector('.section div.divider') as HTMLElement; // The "OR"
+
     if (connected) {
-        btnStart.parentElement!.style.display = 'none';
-        btnJoin.parentElement!.style.display = 'none';
-        (document.querySelector('.section div:nth-child(2)') as HTMLElement).style.display = 'none'; // The "OR"
-        btnDisconnect.style.display = 'block';
+        // If connected externally, hide start host logic
+        if (isExternalConnection) {
+            startServerUI.style.display = 'none';
+            joinServerUI.style.display = 'none';
+            if (divider) divider.style.display = 'none';
+            btnDisconnect.style.display = 'block';
+        } else {
+            // Connected locally. Show Start Host (to enable external). Hide Join.
+            startServerUI.style.display = 'block';
+            joinServerUI.style.display = 'none';
+            if (divider) divider.style.display = 'none';
+            btnDisconnect.style.display = 'none'; // Can't disconnect from local server easily or maybe we shouldn't?
+            // Actually, if we disconnect local, we kill the server connection.
+            // Let's allow disconnect if user wants to stop everything?
+            // But if we are connected locally, we are just "ready".
+            // The "Start Host" button is what we want focused.
+        }
+
         voiceSection.style.display = 'block';
         participantsSection.style.display = 'block';
         chatSection.style.display = 'block';
         terminalSection.style.display = 'block';
 
-        if (isHost) {
-             // If host, maybe show other things?
-        }
     } else {
-        btnStart.parentElement!.style.display = 'block';
-        btnJoin.parentElement!.style.display = 'block';
-        (document.querySelector('.section div:nth-child(2)') as HTMLElement).style.display = 'block';
+        // Disconnected
+        startServerUI.style.display = 'block';
+        joinServerUI.style.display = 'block';
+        if (divider) divider.style.display = 'block';
         btnDisconnect.style.display = 'none';
+
         voiceSection.style.display = 'none';
         participantsSection.style.display = 'none';
         chatSection.style.display = 'none';
@@ -99,29 +120,37 @@ function updateState(connected: boolean) {
 
         stopVoice();
         voiceToggle.checked = false;
-        // Clear participants and chat?
         participantsList.innerHTML = '';
         pendingList.innerHTML = '';
         chatMessages.innerHTML = '';
         terminalOutput.textContent = '';
-        participants.length = 0; // Clear array
-        isHost = false; // Reset host status
+        participants.length = 0;
+        isHost = false;
+        isExternalConnection = false;
     }
 }
 
 // Handlers
-btnStart.addEventListener('click', () => {
+// IMPORTANT: ID will be changed to btn-start-host in HTML
+const btnStartHost = document.getElementById('btn-start-server') as HTMLButtonElement;
+
+btnStartHost.addEventListener('click', () => {
+    // We are likely already connected locally.
+    // Sending startHost enables external connections.
     const port = parseInt(inputPort.value);
-    vscode.postMessage({ command: 'startServer', port });
+    vscode.postMessage({ command: 'startHost', port });
+    isExternalConnection = false;
 });
 
 btnJoin.addEventListener('click', () => {
     const address = inputAddress.value;
     vscode.postMessage({ command: 'joinServer', address });
+    isExternalConnection = true;
 });
 
 btnDisconnect.addEventListener('click', () => {
     vscode.postMessage({ command: 'disconnect' });
+    isExternalConnection = false;
 });
 
 voiceToggle.addEventListener('change', async () => {
@@ -179,8 +208,7 @@ chatInput.addEventListener('input', () => {
     const lastAt = text.lastIndexOf('@', cursor - 1);
 
     if (lastAt !== -1) {
-        // Check if there are spaces between @ and cursor (allow spaces in names? usually no for simple autocomplete)
-        // Let's assume username has no spaces or we just match until cursor
+        // Check if there are spaces between @ and cursor
         const query = text.substring(lastAt + 1, cursor);
         if (!query.includes(' ')) {
             mentionActive = true;
@@ -188,9 +216,8 @@ chatInput.addEventListener('input', () => {
             renderMentions();
             // Position popup
             const rect = chatInput.getBoundingClientRect();
-            mentionList.style.display = 'block'; // Make it visible to calculate offsetHeight
+            mentionList.style.display = 'block';
 
-            // Position above the input
             const topPos = rect.top - mentionList.offsetHeight;
             mentionList.style.top = `${topPos}px`;
             mentionList.style.left = `${rect.left}px`;
@@ -233,7 +260,7 @@ function renderMentions() {
              li.style.backgroundColor = 'var(--vscode-editor-background)';
         }
 
-        li.addEventListener('mousedown', (e) => { // mousedown happens before blur
+        li.addEventListener('mousedown', (e) => {
             e.preventDefault();
             mentionIndex = i;
             applyMention();
@@ -242,7 +269,6 @@ function renderMentions() {
         mentionList.appendChild(li);
     });
 
-    // Update position in case list height changed
     const rect = chatInput.getBoundingClientRect();
     const topPos = rect.top - mentionList.offsetHeight;
     mentionList.style.top = `${topPos}px`;
@@ -265,14 +291,14 @@ function applyMention() {
     }
 }
 
-// Message Listener (from Extension Host)
+// Message Listener
 window.addEventListener('message', event => {
     const message = event.data;
     switch (message.type) {
         case 'identity':
             clearInterval(readyInterval);
             username = message.username;
-            usernameDisplay.textContent = username ? `Logged in as: ${username}` : 'Error: git config user.name not set. Set "collabCode.username" in settings or git config.';
+            usernameDisplay.textContent = username ? `Logged in as: ${username}` : 'Error: git config user.name not set.';
 
             if (message.iceServers) {
                  const formatted = message.iceServers.map((url: string) => ({ urls: url }));
@@ -281,7 +307,6 @@ window.addEventListener('message', event => {
 
             if (message.defaultPort) {
                 inputPort.value = message.defaultPort;
-                // If the remote address placeholder is default, update it too
                 if (inputAddress.getAttribute('placeholder') === "ws://localhost:3000") {
                     inputAddress.placeholder = `ws://localhost:${message.defaultPort}`;
                     inputAddress.value = `ws://localhost:${message.defaultPort}`;
@@ -289,7 +314,7 @@ window.addEventListener('message', event => {
             }
 
             if (!username) {
-                btnStart.disabled = true;
+                btnStartHost.disabled = true;
                 btnJoin.disabled = true;
             }
             break;
@@ -307,8 +332,6 @@ window.addEventListener('message', event => {
             initiateConnection(message.sessionId);
             break;
         case 'user-list':
-            // If we receive a full list, we should probably clear and rebuild or merge?
-            // For now, let's just clear and rebuild to be safe (simple)
             participantsList.innerHTML = '';
             participants.length = 0;
             message.users.forEach((u: any) => addUserToUI(u.sessionId, u.username, u.color));
@@ -319,7 +342,6 @@ window.addEventListener('message', event => {
         case 'chat-message':
             addChatMessage(message);
             break;
-        // Shared Terminal Data
         case 'terminal-data':
             appendTerminalData(message.data);
             break;
@@ -358,7 +380,6 @@ function addUserToUI(sessionId: string, name: string, color: string) {
     const controls = document.createElement('div');
     controls.style.display = 'flex';
 
-    // Follow Button
     if (name !== username) {
         const followBtn = document.createElement('button');
         followBtn.className = 'follow-btn';
@@ -372,7 +393,6 @@ function addUserToUI(sessionId: string, name: string, color: string) {
         controls.appendChild(followBtn);
     }
 
-    // Kick Button (Host only)
     if (isHost && name !== username) {
         const kickBtn = document.createElement('button');
         kickBtn.className = 'kick-btn';
@@ -398,7 +418,6 @@ function removeUserFromUI(sessionId: string) {
 
     if (followingSessionId === sessionId) {
         followingSessionId = null;
-        // Notify extension to stop following
         vscode.postMessage({ command: 'follow-user', targetSessionId: null });
     }
 }
@@ -449,14 +468,11 @@ function checkPendingEmpty() {
 
 function toggleFollow(sessionId: string, btn: HTMLButtonElement) {
     if (followingSessionId === sessionId) {
-        // Unfollow
         followingSessionId = null;
         btn.textContent = 'Follow';
         btn.classList.remove('following');
         vscode.postMessage({ command: 'follow-user', targetSessionId: null });
     } else {
-        // Follow this user
-        // Unfollow previous if any
         if (followingSessionId) {
              const prevBtn = document.querySelector(`#user-${followingSessionId} .follow-btn`);
              if (prevBtn) {
@@ -477,7 +493,7 @@ function addChatMessage(message: any) {
     const text = message.text;
     const color = message.color;
     const timestamp = message.timestamp;
-    const reference = message.reference; // { file, startLine, endLine, content }
+    const reference = message.reference;
 
     const div = document.createElement('div');
     div.style.marginBottom = '5px';
@@ -567,9 +583,6 @@ function addChatMessage(message: any) {
 }
 
 function appendTerminalData(data: string) {
-    // Append to terminal output
-    // Simple text append for now.
-    // In a real app we would use xterm.js
     const span = document.createElement('span');
     span.textContent = data;
     terminalOutput.appendChild(span);
@@ -596,7 +609,6 @@ function stopVoice() {
         localStream = null;
     }
 
-    // Close all peers
     peers.forEach(pc => pc.close());
     peers.clear();
 
@@ -606,7 +618,6 @@ function stopVoice() {
 async function getOrCreatePeer(senderId: string) {
     if (peers.has(senderId)) {return peers.get(senderId)!;}
 
-    // Parse ICE servers
     let iceServers = [];
     try {
         iceServers = JSON.parse(iceServersInput.value);
@@ -614,7 +625,6 @@ async function getOrCreatePeer(senderId: string) {
 
     const newPc = new RTCPeerConnection({ iceServers });
 
-    // Add local tracks
     if (localStream) {
         localStream.getTracks().forEach(track => newPc.addTrack(track, localStream!));
     }
@@ -629,7 +639,7 @@ async function getOrCreatePeer(senderId: string) {
         if (event.candidate) {
             vscode.postMessage({
                 command: 'webrtc-signal',
-                targetSessionId: senderId, // Send specifically to this peer
+                targetSessionId: senderId,
                 signal: { type: 'candidate', candidate: event.candidate }
             });
         }
@@ -640,7 +650,7 @@ async function getOrCreatePeer(senderId: string) {
 }
 
 async function handleWebRTCSignalRefined(signal: any, senderId: string) {
-    if (!voiceToggle.checked) {return;} // Ignore if voice disabled
+    if (!voiceToggle.checked) {return;}
 
     const peer = await getOrCreatePeer(senderId);
 
@@ -671,4 +681,3 @@ async function initiateConnection(targetId: string) {
         signal: { type: 'offer', sdp: peer.localDescription }
     });
 }
-

@@ -32,6 +32,7 @@ export class CollaborationServer {
     private clients: Map<string, Client> = new Map();
     private documents: Map<string, DocumentState> = new Map(); // filepath -> state
     private hostSessionId: string | null = null;
+    private allowExternalConnections = false;
 
     // Event hook for extension to populate files
     public onClientApproved?: (sessionId: string) => void;
@@ -47,8 +48,13 @@ export class CollaborationServer {
             throw new Error("Either server or port must be provided");
         }
 
-        this.wss.on('connection', (ws) => this.handleConnection(ws));
+        this.wss.on('connection', (ws, req) => this.handleConnection(ws, req));
         this.log(`Collab Server started.`);
+    }
+
+    public enableExternalConnections() {
+        this.allowExternalConnections = true;
+        this.log("External connections enabled.");
     }
 
     private log(msg: string) {
@@ -84,11 +90,22 @@ export class CollaborationServer {
         }
     }
 
-    private handleConnection(ws: WebSocket) {
+    private handleConnection(ws: WebSocket, req: http.IncomingMessage) {
+        const remoteAddress = req.socket.remoteAddress;
+
+        // Simple localhost check. IPv6 ::1 or IPv4 127.0.0.1 or ::ffff:127.0.0.1
+        const isLocal = remoteAddress === '::1' || remoteAddress === '127.0.0.1' || remoteAddress?.includes('127.0.0.1');
+
+        if (!isLocal && !this.allowExternalConnections) {
+            this.log(`Rejected external connection from ${remoteAddress}`);
+            ws.close();
+            return;
+        }
+
         const sessionId = uuidv4();
         const color = COLORS[Math.floor(Math.random() * COLORS.length)];
 
-        this.log(`New connection: ${sessionId}`);
+        this.log(`New connection: ${sessionId} (from ${remoteAddress})`);
 
         // Send Welcome with SessionID
         const welcomeMsg = {

@@ -15,7 +15,9 @@
     "Other"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "*"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
