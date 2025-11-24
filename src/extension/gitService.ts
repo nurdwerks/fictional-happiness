@@ -9,6 +9,7 @@ export class GitService {
 
     constructor(private workspaceRoot: string | undefined) {
         this.loadGitignore();
+        this.watchGitignore();
     }
 
     public async getUserName(): Promise<string | undefined> {
@@ -33,8 +34,23 @@ export class GitService {
                 this.ig = ignore().add(content);
             } catch (e) {
                 console.error("Failed to load .gitignore", e);
+                this.ig = undefined;
             }
+        } else {
+            this.ig = undefined;
         }
+    }
+
+    private watchGitignore() {
+        if (!this.workspaceRoot) {return;}
+
+        const watcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(this.workspaceRoot, '.gitignore')
+        );
+
+        watcher.onDidChange(() => this.loadGitignore());
+        watcher.onDidCreate(() => this.loadGitignore());
+        watcher.onDidDelete(() => this.loadGitignore());
     }
 
     public isIgnored(filePath: string): boolean {

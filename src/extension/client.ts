@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as cp from 'child_process';
+import * as os from 'os';
 import WebSocket from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 import { GitService } from './gitService';
@@ -42,11 +43,18 @@ export class CollaborationClient {
     // Follow Mode
     private followingSessionId: string | null = null;
 
+    private webviewReadyPromise: Promise<void>;
+    private resolveWebviewReady!: () => void;
+
     constructor(
         private context: vscode.ExtensionContext,
         private webviewPanel: vscode.WebviewPanel,
         private gitService: GitService
     ) {
+        this.webviewReadyPromise = new Promise((resolve) => {
+            this.resolveWebviewReady = resolve;
+        });
+
         this.decorationType = vscode.window.createTextEditorDecorationType({
             backgroundColor: 'rgba(255,0,0,0.3)',
             border: '1px solid red'
@@ -67,7 +75,8 @@ export class CollaborationClient {
         });
     }
 
-    private sendIdentity() {
+    private async sendIdentity() {
+        await this.webviewReadyPromise;
         // Also send configuration
         const config = vscode.workspace.getConfiguration('collabCode');
         const iceServers = config.get('stunServers') || ["stun:stun.l.google.com:19302"];
@@ -98,12 +107,15 @@ export class CollaborationClient {
     private registerWebviewListeners() {
         this.webviewPanel.webview.onDidReceiveMessage(async message => {
             switch (message.command) {
+                case 'ready':
+                    this.resolveWebviewReady();
+                    break;
                 case 'startServer':
                     await this.startLocalServer(message.port);
                     this.connect(`ws://localhost:${message.port}`);
                     break;
                 case 'joinServer':
-                    this.connect(message.address);
+                    this.handleJoinRequest(message.address);
                     break;
                 case 'disconnect':
                     this.disconnect();
@@ -188,6 +200,11 @@ export class CollaborationClient {
             if (event.document.uri.scheme !== 'file') {return;}
             if (this.gitService.isIgnored(event.document.fileName)) {return;}
 
+            // Guest: Do not send changes to .gitignore
+            if (!this.server && path.basename(event.document.fileName) === '.gitignore') {
+                return;
+            }
+
             const filePath = vscode.workspace.asRelativePath(event.document.uri);
 
             // Ensure shadow exists
@@ -264,6 +281,7 @@ export class CollaborationClient {
             if (!this.ws) {return;}
             event.files.forEach(async uri => {
                 if (this.gitService.isIgnored(uri.fsPath)) {return;}
+                if (!this.server && path.basename(uri.fsPath) === '.gitignore') {return;} // Guest check
                 const content = await vscode.workspace.fs.readFile(uri);
                 const strContent = new TextDecoder().decode(content);
 
@@ -282,6 +300,7 @@ export class CollaborationClient {
         vscode.workspace.onDidDeleteFiles(event => {
              if (!this.ws) {return;}
              event.files.forEach(uri => {
+                 if (!this.server && path.basename(uri.fsPath) === '.gitignore') {return;} // Guest check
                  this.shadows.delete(vscode.workspace.asRelativePath(uri));
                  const msg: FileDeleteMessage = {
                      type: 'file-delete',
@@ -294,15 +313,64 @@ export class CollaborationClient {
         // Listen for Shared Command
         this.context.subscriptions.push(
             vscode.commands.registerCommand('collabCode.runSharedCommand', async () => {
+                 if (!this.server) {
+                     vscode.window.showErrorMessage("Only the host can run shared commands.");
+                     return;
+                 }
                  const cmd = await vscode.window.showInputBox({ prompt: "Enter command to run and share output" });
                  if (cmd) {
                      this.runSharedCommand(cmd);
                  }
             })
         );
+
+        // Prevent guests from editing .gitignore
+        vscode.workspace.onWillSaveTextDocument(event => {
+            if (!this.server && path.basename(event.document.fileName) === '.gitignore') {
+                event.waitUntil(Promise.reject(new Error("Guests cannot edit .gitignore")));
+            }
+        });
+
+        vscode.workspace.onWillDeleteFiles(event => {
+            if (!this.server) {
+                event.files.forEach(uri => {
+                    if (path.basename(uri.fsPath) === '.gitignore') {
+                        event.waitUntil(Promise.reject(new Error("Guests cannot delete .gitignore")));
+                    }
+                });
+            }
+        });
+
+        vscode.workspace.onWillRenameFiles(event => {
+            if (!this.server) {
+                event.files.forEach(f => {
+                    if (path.basename(f.oldUri.fsPath) === '.gitignore') {
+                        event.waitUntil(Promise.reject(new Error("Guests cannot rename .gitignore")));
+                    }
+                });
+            }
+        });
+    }
+
+    private async handleJoinRequest(address: string) {
+        try {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'collab-code-'));
+            const joinConfig = {
+                address: address,
+                autoJoin: true
+            };
+            fs.writeFileSync(path.join(tempDir, '.collab-join.json'), JSON.stringify(joinConfig, null, 2));
+            const uri = vscode.Uri.file(tempDir);
+            await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+        } catch (e) {
+            vscode.window.showErrorMessage(`Failed to launch new window: ${(e as any).message}`);
+        }
     }
 
     private runSharedCommand(command: string) {
+        // Double check
+        if (!this.server) { return; }
+
         const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (!rootPath) { return; }
 
@@ -388,9 +456,58 @@ export class CollaborationClient {
 
     private async startLocalServer(port: number) {
         this.server = new CollaborationServer(undefined, port);
+        this.server.onClientApproved = (targetSessionId) => {
+            this.syncWorkspaceToClient(targetSessionId);
+        };
     }
 
-    private connect(address: string) {
+    private async syncWorkspaceToClient(targetSessionId: string) {
+        // Walk workspace and send all files
+        // Use GitService to filter? workspace.findFiles respects .gitignore if we use exclude param?
+        // vscode.workspace.findFiles(include, exclude)
+        // If we just use findFiles('**/*'), it generally respects .gitignore if useIgnoreFiles is true (default)
+        // But we can also double check with gitService.
+
+        const files = await vscode.workspace.findFiles('**/*');
+        for (const uri of files) {
+            if (this.gitService.isIgnored(uri.fsPath)) { continue; }
+
+            // Read content
+            try {
+                const content = await vscode.workspace.fs.readFile(uri);
+                const strContent = new TextDecoder().decode(content);
+
+                // Send directly to that client via server?
+                // Server doesn't expose "sendToClient".
+                // We need to send a message to the server saying "Send this to X".
+                // OR, we just use 'file-init' and the server broadcasts it?
+                // If we broadcast, everyone gets it. Not bad, but wasteful.
+                // If we want to target, we need a Target field in BaseMessage?
+                // Or we can add a method to Server to send to specific client.
+                // Since we have reference to `this.server`, we can call `this.server.sendToClient(...)` if we implement it.
+                // But `CollaborationServer` is in `server.ts`.
+
+                if (this.server) {
+                    const msg: FileInitMessage = {
+                        type: 'file-init',
+                        file: vscode.workspace.asRelativePath(uri),
+                        content: strContent,
+                        version: 0
+                    };
+                    this.server.sendToClient(targetSessionId, msg);
+                }
+            } catch (e) {
+                console.error(`Failed to sync file ${uri.fsPath}`, e);
+            }
+        }
+    }
+
+    public async connect(address: string) {
+        // Wait for webview before connecting, or at least before updating UI?
+        // Actually we can connect WS immediately, but we shouldn't post messages to webview until ready.
+        // However, if we connect now, we might receive 'open' event before webview is ready.
+        await this.webviewReadyPromise;
+
         this.ws = new WebSocket(address);
 
         this.ws.on('open', () => {
@@ -555,6 +672,10 @@ export class CollaborationClient {
          } else {
              // If not open, write to disk so we are in sync
              const fullPath = path.join(rootPath, msg.file);
+             const dir = path.dirname(fullPath);
+             if (!fs.existsSync(dir)) {
+                 fs.mkdirSync(dir, { recursive: true });
+             }
              fs.writeFileSync(fullPath, msg.content);
          }
     }
@@ -753,6 +874,10 @@ export class CollaborationClient {
 
         // Avoid overwriting if exists?
         if (!fs.existsSync(fullPath)) {
+            const dir = path.dirname(fullPath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
             fs.writeFileSync(fullPath, msg.content);
             this.shadows.set(msg.file, msg.content);
         }

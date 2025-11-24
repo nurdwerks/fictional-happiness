@@ -665,3 +665,6 @@ async function initiateConnection(targetId: string) {
         signal: { type: 'offer', sdp: peer.localDescription }
     });
 }
+
+// Notify extension that webview is ready
+vscode.postMessage({ command: 'ready' });
