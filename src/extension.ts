@@ -53,11 +53,13 @@ class CollabViewProvider implements vscode.WebviewViewProvider {
 
 		webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
-        // Initialize Client
-        this.client = new CollaborationClient(this._context, { webview: webviewView.webview } as any, this._gitService);
-
-        // Check for auto-join
-        this.checkForAutoJoin();
+        // Initialize or Update Client
+        if (!this.client) {
+            this.client = new CollaborationClient(this._context, { webview: webviewView.webview } as any, this._gitService);
+            this.checkForAutoJoin();
+        } else {
+            this.client.updateWebview({ webview: webviewView.webview } as any);
+        }
 	}
 
     private checkForAutoJoin() {
