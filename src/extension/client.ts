@@ -57,18 +57,42 @@ export class CollaborationClient {
         this.initializeOpenEditors();
 
         // Send initial identity to webview
-        this.gitService.getUserName().then(name => {
-            this.myUsername = name;
-            // Also send configuration
-            const config = vscode.workspace.getConfiguration('collabCode');
-            const iceServers = config.get('stunServers') || ["stun:stun.l.google.com:19302"];
+        this.sendIdentity();
 
+        // Listen for configuration changes
+        vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('collabCode')) {
+                this.sendIdentity();
+            }
+        });
+    }
+
+    private sendIdentity() {
+        // Also send configuration
+        const config = vscode.workspace.getConfiguration('collabCode');
+        const iceServers = config.get('stunServers') || ["stun:stun.l.google.com:19302"];
+        const defaultPort = config.get('defaultPort') || 3000;
+        const configUsername = config.get('username') as string;
+
+        if (configUsername) {
+            this.myUsername = configUsername;
             this.webviewPanel.webview.postMessage({
                 type: 'identity',
-                username: name,
-                iceServers: iceServers
+                username: this.myUsername,
+                iceServers: iceServers,
+                defaultPort: defaultPort
             });
-        });
+        } else {
+            this.gitService.getUserName().then(name => {
+                this.myUsername = name;
+                this.webviewPanel.webview.postMessage({
+                    type: 'identity',
+                    username: name,
+                    iceServers: iceServers,
+                    defaultPort: defaultPort
+                });
+            });
+        }
     }
 
     private registerWebviewListeners() {

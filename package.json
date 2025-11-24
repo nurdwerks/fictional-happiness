@@ -11,7 +11,10 @@
     "Other"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onView:collabCodeView",
+    "onCommand:collabCode.addReference"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -45,6 +48,16 @@
           "type": "array",
           "default": [],
           "description": "List of TURN servers for WebRTC"
+        },
+        "collabCode.defaultPort": {
+          "type": "number",
+          "default": 3000,
+          "description": "Default port for the local collaboration server."
+        },
+        "collabCode.username": {
+          "type": "string",
+          "default": "",
+          "description": "Username to display in collaboration. If empty, tries to use Git username."
         }
       }
     },
