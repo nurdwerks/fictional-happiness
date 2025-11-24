@@ -24,7 +24,7 @@ export class GitService {
     }
 
     private loadGitignore() {
-        if (!this.workspaceRoot) return;
+        if (!this.workspaceRoot) {return;}
 
         const gitignorePath = path.join(this.workspaceRoot, '.gitignore');
         if (fs.existsSync(gitignorePath)) {
@@ -38,11 +38,11 @@ export class GitService {
     }
 
     public isIgnored(filePath: string): boolean {
-        if (!this.ig || !this.workspaceRoot) return false;
+        if (!this.ig || !this.workspaceRoot) {return false;}
 
         // Get relative path
         const relative = path.relative(this.workspaceRoot, filePath);
-        if (relative.startsWith('..')) return false; // Outside workspace
+        if (relative.startsWith('..')) {return false;} // Outside workspace
 
         return this.ig.ignores(relative);
     }

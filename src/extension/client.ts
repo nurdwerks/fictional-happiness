@@ -7,7 +7,7 @@ import { GitService } from './gitService';
 import {
     MessageType, BaseMessage, JoinMessage, TextOperationMessage,
     CursorSelectionMessage, WebRTCSignalMessage, FileCreateMessage,
-    FileInitMessage, FileDeleteMessage
+    FileInitMessage, FileDeleteMessage, ChatMessage
 } from '../common/messages';
 import { CollaborationServer } from '../server/server';
 
@@ -86,6 +86,12 @@ export class CollaborationClient {
                         targetSessionId: message.targetSessionId
                     } as WebRTCSignalMessage);
                     break;
+                case 'chat-message':
+                    this.send({
+                        type: 'chat-message',
+                        text: message.text
+                    } as ChatMessage);
+                    break;
             }
         });
     }
@@ -112,10 +118,10 @@ export class CollaborationClient {
 
         // Text Changes
         vscode.workspace.onDidChangeTextDocument(event => {
-            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-            if (this.isApplyingRemoteOp) return;
-            if (event.document.uri.scheme !== 'file') return;
-            if (this.gitService.isIgnored(event.document.fileName)) return;
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {return;}
+            if (this.isApplyingRemoteOp) {return;}
+            if (event.document.uri.scheme !== 'file') {return;}
+            if (this.gitService.isIgnored(event.document.fileName)) {return;}
 
             const filePath = vscode.workspace.asRelativePath(event.document.uri);
 
@@ -175,8 +181,8 @@ export class CollaborationClient {
 
         // Selection Changes
         vscode.window.onDidChangeTextEditorSelection(event => {
-            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-            if (event.textEditor.document.uri.scheme !== 'file') return;
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {return;}
+            if (event.textEditor.document.uri.scheme !== 'file') {return;}
 
             const selection = event.selections[0];
             const msg: CursorSelectionMessage = {
@@ -190,9 +196,9 @@ export class CollaborationClient {
 
         // File Creation
         vscode.workspace.onDidCreateFiles(event => {
-            if (!this.ws) return;
+            if (!this.ws) {return;}
             event.files.forEach(async uri => {
-                if (this.gitService.isIgnored(uri.fsPath)) return;
+                if (this.gitService.isIgnored(uri.fsPath)) {return;}
                 const content = await vscode.workspace.fs.readFile(uri);
                 const strContent = new TextDecoder().decode(content);
 
@@ -209,7 +215,7 @@ export class CollaborationClient {
 
          // File Deletion
         vscode.workspace.onDidDeleteFiles(event => {
-             if (!this.ws) return;
+             if (!this.ws) {return;}
              event.files.forEach(uri => {
                  this.shadows.delete(vscode.workspace.asRelativePath(uri));
                  const msg: FileDeleteMessage = {
@@ -364,21 +370,22 @@ export class CollaborationClient {
                 this.sessionId = msg.sessionId;
                 break;
             case 'user-joined':
-                // Relay to webview for WebRTC
-                this.webviewPanel.webview.postMessage({
-                    type: 'user-joined',
-                    sessionId: (msg as any).sessionId
-                });
+            case 'user-left':
+            case 'user-list':
+                this.webviewPanel.webview.postMessage(msg);
+                break;
+            case 'chat-message':
+                this.webviewPanel.webview.postMessage(msg);
                 break;
         }
     }
 
     private flushPendingOps(file: string) {
         const buffer = this.pendingOps.get(file);
-        if (!buffer || buffer.length === 0) return;
+        if (!buffer || buffer.length === 0) {return;}
 
         // Check if we are already awaiting an ack
-        if (this.inFlightOps.has(file)) return;
+        if (this.inFlightOps.has(file)) {return;}
 
         const op = buffer.shift();
         if (op) {
@@ -396,8 +403,8 @@ export class CollaborationClient {
     }
 
     private handleFileInit(msg: FileInitMessage) {
-         if (!msg.file || this.isPathUnsafe(msg.file)) return;
-         if (this.gitService.isIgnored(msg.file)) return;
+         if (!msg.file || this.isPathUnsafe(msg.file)) {return;}
+         if (this.gitService.isIgnored(msg.file)) {return;}
 
          // Server is telling us the authoritative content
          this.shadows.set(msg.file, msg.content);
@@ -424,12 +431,12 @@ export class CollaborationClient {
     }
 
     private async applyRemoteOperation(msg: TextOperationMessage) {
-        if (!msg.file) return;
+        if (!msg.file) {return;}
         if (this.isPathUnsafe(msg.file)) {
             console.error(`Blocked unsafe file operation: ${msg.file}`);
             return;
         }
-        if (this.gitService.isIgnored(msg.file)) return;
+        if (this.gitService.isIgnored(msg.file)) {return;}
 
         // Ensure we have a shadow
         if (!this.shadows.has(msg.file)) {
@@ -530,10 +537,10 @@ export class CollaborationClient {
     }
 
     private updateRemoteCursor(msg: CursorSelectionMessage) {
-        if (!msg.file || !msg.sessionId) return;
+        if (!msg.file || !msg.sessionId) {return;}
 
         const editor = vscode.window.visibleTextEditors.find(e => vscode.workspace.asRelativePath(e.document.uri) === msg.file);
-        if (!editor) return;
+        if (!editor) {return;}
 
         // Get or Create Map for this file
         if (!this.cursorDecorations.has(msg.file)) {
@@ -570,8 +577,8 @@ export class CollaborationClient {
     }
 
     private handleFileCreate(msg: FileCreateMessage) {
-        if (!msg.file || this.isPathUnsafe(msg.file)) return;
-        if (this.gitService.isIgnored(msg.file)) return;
+        if (!msg.file || this.isPathUnsafe(msg.file)) {return;}
+        if (this.gitService.isIgnored(msg.file)) {return;}
 
         const fullPath = path.join(vscode.workspace.rootPath || '', msg.file);
 
@@ -583,8 +590,8 @@ export class CollaborationClient {
     }
 
     private handleFileDelete(msg: FileDeleteMessage) {
-        if (!msg.file || this.isPathUnsafe(msg.file)) return;
-        if (this.gitService.isIgnored(msg.file)) return;
+        if (!msg.file || this.isPathUnsafe(msg.file)) {return;}
+        if (this.gitService.isIgnored(msg.file)) {return;}
 
         const fullPath = path.join(vscode.workspace.rootPath || '', msg.file);
         if (fs.existsSync(fullPath)) {
@@ -595,8 +602,8 @@ export class CollaborationClient {
 
     private isPathUnsafe(filePath: string): boolean {
         // Prevent directory traversal
-        if (filePath.includes('..')) return true;
-        if (path.isAbsolute(filePath)) return true;
+        if (filePath.includes('..')) {return true;}
+        if (path.isAbsolute(filePath)) {return true;}
         return false;
     }
 

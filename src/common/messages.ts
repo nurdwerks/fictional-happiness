@@ -4,6 +4,9 @@ export type MessageType =
   | 'join'
   | 'welcome'
   | 'user-joined'
+  | 'user-left'
+  | 'user-list'
+  | 'chat-message'
   | 'text-operation'
   | 'cursor-selection'
   | 'file-create'
@@ -62,4 +65,23 @@ export interface FileInitMessage extends BaseMessage {
     type: 'file-init';
     content: string;
     version: number;
+}
+
+export interface ChatMessage extends BaseMessage {
+    type: 'chat-message';
+    text: string;
+    username: string;
+    color?: string;
+    timestamp?: number;
+}
+
+export interface UserListMessage extends BaseMessage {
+    type: 'user-list';
+    users: { sessionId: string; username: string; color: string }[];
+}
+
+export interface UserLeftMessage extends BaseMessage {
+    type: 'user-left';
+    sessionId: string;
+    username?: string;
 }

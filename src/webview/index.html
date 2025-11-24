@@ -49,6 +49,18 @@
                 <textarea id="ice-servers" rows="4" style="width: 100%; background: var(--vscode-input-background); color: var(--vscode-input-foreground);">[{"urls":"stun:stun.l.google.com:19302"}]</textarea>
             </details>
         </div>
+
+        <div class="section" id="participants-section" style="display: none;">
+            <h3>Participants</h3>
+            <ul id="participants-list" style="list-style: none; padding: 0;"></ul>
+        </div>
+
+        <div class="section" id="chat-section" style="display: none;">
+            <h3>Chat</h3>
+            <div id="chat-messages" style="height: 150px; overflow-y: auto; background: var(--vscode-editor-background); border: 1px solid var(--vscode-input-border); margin-bottom: 10px; padding: 5px;"></div>
+            <input type="text" id="chat-input" placeholder="Type a message...">
+            <button id="btn-send-chat">Send</button>
+        </div>
     </div>
     <!-- Script will be injected by VS Code or loaded via webpack bundle -->
     <script src="webview.js"></script>

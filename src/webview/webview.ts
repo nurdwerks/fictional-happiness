@@ -25,6 +25,13 @@ const voiceToggle = document.getElementById('voice-toggle') as HTMLInputElement;
 const voiceStatus = document.getElementById('voice-status')!;
 const iceServersInput = document.getElementById('ice-servers') as HTMLTextAreaElement;
 
+const participantsSection = document.getElementById('participants-section')!;
+const participantsList = document.getElementById('participants-list')!;
+const chatSection = document.getElementById('chat-section')!;
+const chatMessages = document.getElementById('chat-messages')!;
+const chatInput = document.getElementById('chat-input') as HTMLInputElement;
+const btnSendChat = document.getElementById('btn-send-chat') as HTMLButtonElement;
+
 // Helper to update UI state
 function updateState(connected: boolean) {
     isConnected = connected;
@@ -37,15 +44,22 @@ function updateState(connected: boolean) {
         (document.querySelector('.section div:nth-child(2)') as HTMLElement).style.display = 'none'; // The "OR"
         btnDisconnect.style.display = 'block';
         voiceSection.style.display = 'block';
+        participantsSection.style.display = 'block';
+        chatSection.style.display = 'block';
     } else {
         btnStart.parentElement!.style.display = 'block';
         btnJoin.parentElement!.style.display = 'block';
         (document.querySelector('.section div:nth-child(2)') as HTMLElement).style.display = 'block';
         btnDisconnect.style.display = 'none';
         voiceSection.style.display = 'none';
+        participantsSection.style.display = 'none';
+        chatSection.style.display = 'none';
 
         stopVoice();
         voiceToggle.checked = false;
+        // Clear participants and chat?
+        participantsList.innerHTML = '';
+        chatMessages.innerHTML = '';
     }
 }
 
@@ -69,6 +83,24 @@ voiceToggle.addEventListener('change', async () => {
         await startVoice();
     } else {
         stopVoice();
+    }
+});
+
+btnSendChat.addEventListener('click', () => {
+    const text = chatInput.value;
+    if (text) {
+        vscode.postMessage({ command: 'chat-message', text });
+        chatInput.value = '';
+    }
+});
+
+chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        const text = chatInput.value;
+        if (text) {
+            vscode.postMessage({ command: 'chat-message', text });
+            chatInput.value = '';
+        }
     }
 });
 
@@ -108,10 +140,63 @@ window.addEventListener('message', event => {
             handleWebRTCSignalRefined(message.signal, message.senderId);
             break;
         case 'user-joined':
+            addUserToUI(message.sessionId, message.username, message.color);
             initiateConnection(message.sessionId);
+            break;
+        case 'user-list':
+            message.users.forEach((u: any) => addUserToUI(u.sessionId, u.username, u.color));
+            break;
+        case 'user-left':
+            removeUserFromUI(message.sessionId);
+            break;
+        case 'chat-message':
+            addChatMessage(message.username, message.text, message.color, message.timestamp);
             break;
     }
 });
+
+function addUserToUI(sessionId: string, name: string, color: string) {
+    if (document.getElementById(`user-${sessionId}`)) {return;}
+    const li = document.createElement('li');
+    li.id = `user-${sessionId}`;
+    li.style.color = color;
+    li.style.fontWeight = 'bold';
+    li.textContent = name;
+    participantsList.appendChild(li);
+}
+
+function removeUserFromUI(sessionId: string) {
+    const el = document.getElementById(`user-${sessionId}`);
+    if (el) {el.remove();}
+}
+
+function addChatMessage(sender: string, text: string, color: string, timestamp: number) {
+    const div = document.createElement('div');
+    div.style.marginBottom = '5px';
+    const time = new Date(timestamp).toLocaleTimeString();
+
+    const senderSpan = document.createElement('span');
+    senderSpan.style.color = color;
+    senderSpan.style.fontWeight = 'bold';
+    senderSpan.textContent = sender;
+
+    const timeSpan = document.createElement('span');
+    timeSpan.style.fontSize = '0.8em';
+    timeSpan.style.color = 'var(--vscode-descriptionForeground)';
+    timeSpan.style.marginLeft = '5px';
+    timeSpan.textContent = time;
+
+    const textDiv = document.createElement('div');
+    textDiv.textContent = text;
+    textDiv.style.marginLeft = '10px';
+
+    div.appendChild(senderSpan);
+    div.appendChild(timeSpan);
+    div.appendChild(textDiv);
+
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
 
 // --- WebRTC Logic ---
 
@@ -141,7 +226,7 @@ function stopVoice() {
 }
 
 async function getOrCreatePeer(senderId: string) {
-    if (peers.has(senderId)) return peers.get(senderId)!;
+    if (peers.has(senderId)) {return peers.get(senderId)!;}
 
     // Parse ICE servers
     let iceServers = [];
@@ -177,7 +262,7 @@ async function getOrCreatePeer(senderId: string) {
 }
 
 async function handleWebRTCSignalRefined(signal: any, senderId: string) {
-    if (!voiceToggle.checked) return; // Ignore if voice disabled
+    if (!voiceToggle.checked) {return;} // Ignore if voice disabled
 
     const peer = await getOrCreatePeer(senderId);
 
@@ -198,7 +283,7 @@ async function handleWebRTCSignalRefined(signal: any, senderId: string) {
 }
 
 async function initiateConnection(targetId: string) {
-    if (!voiceToggle.checked) return;
+    if (!voiceToggle.checked) {return;}
     const peer = await getOrCreatePeer(targetId);
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
