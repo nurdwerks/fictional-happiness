@@ -35,8 +35,10 @@ export class CollaborationServer {
 
     // Event hook for extension to populate files
     public onClientApproved?: (sessionId: string) => void;
+    private logger?: (msg: string) => void;
 
-    constructor(server?: http.Server, port?: number) {
+    constructor(server?: http.Server, port?: number, logger?: (msg: string) => void) {
+        this.logger = logger;
         if (server) {
             this.wss = new WebSocketServer({ server });
         } else if (port) {
@@ -46,12 +48,29 @@ export class CollaborationServer {
         }
 
         this.wss.on('connection', (ws) => this.handleConnection(ws));
-        console.log(`Collab Server started.`);
+        this.log(`Collab Server started.`);
+    }
+
+    private log(msg: string) {
+        if (this.logger) {
+            this.logger(msg);
+        } else {
+            console.log(msg);
+        }
+    }
+
+    private logError(msg: string, error?: any) {
+        const fullMsg = error ? `${msg} ${error}` : msg;
+        if (this.logger) {
+            this.logger(`ERROR: ${fullMsg}`);
+        } else {
+            console.error(msg, error);
+        }
     }
 
     public setHost(sessionId: string) {
         this.hostSessionId = sessionId;
-        console.log(`Host set to: ${sessionId}`);
+        this.log(`Host set to: ${sessionId}`);
         const client = this.clients.get(sessionId);
         if (client) {
             client.status = 'approved';
@@ -69,7 +88,7 @@ export class CollaborationServer {
         const sessionId = uuidv4();
         const color = COLORS[Math.floor(Math.random() * COLORS.length)];
 
-        console.log(`New connection: ${sessionId}`);
+        this.log(`New connection: ${sessionId}`);
 
         // Send Welcome with SessionID
         const welcomeMsg = {
@@ -86,12 +105,12 @@ export class CollaborationServer {
                 message.sessionId = sessionId;
                 this.handleMessage(ws, message, sessionId, color);
             } catch (e) {
-                console.error("Error parsing message", e);
+                this.logError("Error parsing message", e);
             }
         });
 
         ws.on('close', () => {
-            console.log(`Connection closed: ${sessionId}`);
+            this.log(`Connection closed: ${sessionId}`);
             const client = this.clients.get(sessionId);
             this.clients.delete(sessionId);
 
@@ -136,7 +155,7 @@ export class CollaborationServer {
                     color,
                     status: status
                 });
-                console.log(`User ${joinMsg.username} joined. Status: ${status}`);
+                this.log(`User ${joinMsg.username} joined. Status: ${status}`);
 
                 if (status === 'approved') {
                     this.approveClient(sessionId);
