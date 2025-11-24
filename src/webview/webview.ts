@@ -32,6 +32,25 @@ const chatMessages = document.getElementById('chat-messages')!;
 const chatInput = document.getElementById('chat-input') as HTMLInputElement;
 const btnSendChat = document.getElementById('btn-send-chat') as HTMLButtonElement;
 
+// Mentions State
+let mentionActive = false;
+let mentionFilter = '';
+let mentionIndex = 0;
+const mentionList = document.createElement('ul');
+mentionList.id = 'mention-suggestions';
+mentionList.style.position = 'absolute';
+mentionList.style.display = 'none';
+mentionList.style.backgroundColor = 'var(--vscode-editor-background)';
+mentionList.style.border = '1px solid var(--vscode-widget-border)';
+mentionList.style.listStyle = 'none';
+mentionList.style.padding = '0';
+mentionList.style.margin = '0';
+mentionList.style.zIndex = '1000';
+document.body.appendChild(mentionList);
+
+// Participants Data
+const participants: { sessionId: string; username: string; color: string }[] = [];
+
 // Helper to update UI state
 function updateState(connected: boolean) {
     isConnected = connected;
@@ -95,7 +114,28 @@ btnSendChat.addEventListener('click', () => {
 });
 
 chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+    if (mentionActive) {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            mentionIndex++;
+            renderMentions();
+            return;
+        } else if (e.key === 'ArrowUp') {
+             e.preventDefault();
+             mentionIndex--;
+             renderMentions();
+             return;
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+             e.preventDefault();
+             applyMention();
+             return;
+        } else if (e.key === 'Escape') {
+            closeMentions();
+            return;
+        }
+    }
+
+    if (e.key === 'Enter' && !mentionActive) {
         const text = chatInput.value;
         if (text) {
             vscode.postMessage({ command: 'chat-message', text });
@@ -103,6 +143,100 @@ chatInput.addEventListener('keydown', (e) => {
         }
     }
 });
+
+chatInput.addEventListener('input', () => {
+    const text = chatInput.value;
+    const cursor = chatInput.selectionStart || 0;
+
+    // Check for @ symbol before cursor
+    const lastAt = text.lastIndexOf('@', cursor - 1);
+
+    if (lastAt !== -1) {
+        // Check if there are spaces between @ and cursor (allow spaces in names? usually no for simple autocomplete)
+        // Let's assume username has no spaces or we just match until cursor
+        const query = text.substring(lastAt + 1, cursor);
+        if (!query.includes(' ')) {
+            mentionActive = true;
+            mentionFilter = query;
+            renderMentions();
+            // Position popup
+            const rect = chatInput.getBoundingClientRect();
+            mentionList.style.display = 'block'; // Make it visible to calculate offsetHeight
+
+            // Position above the input
+            const topPos = rect.top - mentionList.offsetHeight;
+            mentionList.style.top = `${topPos}px`;
+            mentionList.style.left = `${rect.left}px`;
+            mentionList.style.width = `${rect.width}px`;
+
+            return;
+        }
+    }
+
+    closeMentions();
+});
+
+function closeMentions() {
+    mentionActive = false;
+    mentionList.style.display = 'none';
+}
+
+function renderMentions() {
+    mentionList.innerHTML = '';
+    const matches = participants.filter(p => p.username.toLowerCase().startsWith(mentionFilter.toLowerCase()));
+
+    if (matches.length === 0) {
+        closeMentions();
+        return;
+    }
+
+    if (mentionIndex >= matches.length) {mentionIndex = 0;}
+    if (mentionIndex < 0) {mentionIndex = matches.length - 1;}
+
+    matches.forEach((p, i) => {
+        const li = document.createElement('li');
+        li.textContent = p.username;
+        li.style.padding = '5px';
+        li.style.cursor = 'pointer';
+        li.style.color = 'var(--vscode-editor-foreground)';
+        if (i === mentionIndex) {
+            li.style.backgroundColor = 'var(--vscode-list-activeSelectionBackground)';
+            li.style.color = 'var(--vscode-list-activeSelectionForeground)';
+        } else {
+             li.style.backgroundColor = 'var(--vscode-editor-background)';
+        }
+
+        li.addEventListener('mousedown', (e) => { // mousedown happens before blur
+            e.preventDefault();
+            mentionIndex = i;
+            applyMention();
+        });
+
+        mentionList.appendChild(li);
+    });
+
+    // Update position in case list height changed
+    const rect = chatInput.getBoundingClientRect();
+    const topPos = rect.top - mentionList.offsetHeight;
+    mentionList.style.top = `${topPos}px`;
+    mentionList.style.left = `${rect.left}px`;
+    mentionList.style.width = `${rect.width}px`;
+}
+
+function applyMention() {
+    const matches = participants.filter(p => p.username.toLowerCase().startsWith(mentionFilter.toLowerCase()));
+    if (matches[mentionIndex]) {
+        const user = matches[mentionIndex].username;
+        const text = chatInput.value;
+        const cursor = chatInput.selectionStart || 0;
+        const lastAt = text.lastIndexOf('@', cursor - 1);
+
+        const newText = text.substring(0, lastAt) + '@' + user + ' ' + text.substring(cursor);
+        chatInput.value = newText;
+        chatInput.focus();
+        closeMentions();
+    }
+}
 
 // Message Listener (from Extension Host)
 window.addEventListener('message', event => {
@@ -150,13 +284,14 @@ window.addEventListener('message', event => {
             removeUserFromUI(message.sessionId);
             break;
         case 'chat-message':
-            addChatMessage(message.username, message.text, message.color, message.timestamp);
+            addChatMessage(message);
             break;
     }
 });
 
 function addUserToUI(sessionId: string, name: string, color: string) {
     if (document.getElementById(`user-${sessionId}`)) {return;}
+    participants.push({ sessionId, username: name, color });
     const li = document.createElement('li');
     li.id = `user-${sessionId}`;
     li.style.color = color;
@@ -168,9 +303,17 @@ function addUserToUI(sessionId: string, name: string, color: string) {
 function removeUserFromUI(sessionId: string) {
     const el = document.getElementById(`user-${sessionId}`);
     if (el) {el.remove();}
+    const idx = participants.findIndex(p => p.sessionId === sessionId);
+    if (idx !== -1) { participants.splice(idx, 1); }
 }
 
-function addChatMessage(sender: string, text: string, color: string, timestamp: number) {
+function addChatMessage(message: any) {
+    const sender = message.username;
+    const text = message.text;
+    const color = message.color;
+    const timestamp = message.timestamp;
+    const reference = message.reference; // { file, startLine, endLine, content }
+
     const div = document.createElement('div');
     div.style.marginBottom = '5px';
     const time = new Date(timestamp).toLocaleTimeString();
@@ -187,12 +330,72 @@ function addChatMessage(sender: string, text: string, color: string, timestamp: 
     timeSpan.textContent = time;
 
     const textDiv = document.createElement('div');
-    textDiv.textContent = text;
-    textDiv.style.marginLeft = '10px';
+    if (text) {
+        textDiv.textContent = text;
+        textDiv.style.marginLeft = '10px';
+    }
 
     div.appendChild(senderSpan);
     div.appendChild(timeSpan);
-    div.appendChild(textDiv);
+    if (text) {
+        div.appendChild(textDiv);
+    }
+
+    if (reference) {
+        const refDiv = document.createElement('div');
+        refDiv.style.marginLeft = '10px';
+        refDiv.style.marginTop = '5px';
+        refDiv.style.border = '1px solid var(--vscode-textBlockQuote-border)';
+        refDiv.style.backgroundColor = 'var(--vscode-textBlockQuote-background)';
+        refDiv.style.padding = '5px';
+
+        const header = document.createElement('div');
+        header.style.marginBottom = '5px';
+
+        const link = document.createElement('a');
+        link.textContent = `${reference.file}:${reference.startLine + 1}`;
+        link.href = '#';
+        link.style.color = 'var(--vscode-textLink-foreground)';
+        link.style.textDecoration = 'underline';
+        link.onclick = (e) => {
+            e.preventDefault();
+            vscode.postMessage({
+                command: 'openReference',
+                file: reference.file,
+                startLine: reference.startLine,
+                endLine: reference.endLine
+            });
+        };
+        header.appendChild(link);
+        refDiv.appendChild(header);
+
+        const lines = reference.content.split('\n');
+        const isMultiLine = lines.length > 1;
+
+        if (isMultiLine) {
+            const details = document.createElement('details');
+            const summary = document.createElement('summary');
+            summary.textContent = `Code (${lines.length} lines)`;
+            summary.style.cursor = 'pointer';
+
+            const pre = document.createElement('pre');
+            pre.style.margin = '5px 0 0 0';
+            pre.style.fontFamily = 'monospace';
+            pre.textContent = reference.content;
+
+            details.appendChild(summary);
+            details.appendChild(pre);
+            refDiv.appendChild(details);
+        } else {
+             const pre = document.createElement('pre');
+             pre.style.margin = '0';
+             pre.style.fontFamily = 'monospace';
+             pre.textContent = reference.content;
+             refDiv.appendChild(pre);
+        }
+
+        div.appendChild(refDiv);
+    }
 
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;

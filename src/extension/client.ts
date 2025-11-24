@@ -92,7 +92,15 @@ export class CollaborationClient {
                         text: message.text
                     } as ChatMessage);
                     break;
+                case 'openReference':
+                    this.handleOpenReference(message.file, message.startLine, message.endLine);
+                    break;
             }
+        });
+
+        // Register Command to add reference
+        vscode.commands.registerCommand('collabCode.addReference', () => {
+             this.handleAddReference();
         });
     }
 
@@ -406,6 +414,8 @@ export class CollaborationClient {
          if (!msg.file || this.isPathUnsafe(msg.file)) {return;}
          if (this.gitService.isIgnored(msg.file)) {return;}
 
+         const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+
          // Server is telling us the authoritative content
          this.shadows.set(msg.file, msg.content);
 
@@ -425,7 +435,7 @@ export class CollaborationClient {
              });
          } else {
              // If not open, write to disk so we are in sync
-             const fullPath = path.join(vscode.workspace.rootPath || '', msg.file);
+             const fullPath = path.join(rootPath, msg.file);
              fs.writeFileSync(fullPath, msg.content);
          }
     }
@@ -438,9 +448,11 @@ export class CollaborationClient {
         }
         if (this.gitService.isIgnored(msg.file)) {return;}
 
+        const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+
         // Ensure we have a shadow
         if (!this.shadows.has(msg.file)) {
-            const fullPath = path.join(vscode.workspace.rootPath || '', msg.file);
+            const fullPath = path.join(rootPath, msg.file);
             if (fs.existsSync(fullPath)) {
                 this.shadows.set(msg.file, fs.readFileSync(fullPath, 'utf8'));
             } else {
@@ -510,7 +522,11 @@ export class CollaborationClient {
         }
 
         // Apply to Editor
-        const uri = vscode.Uri.file(path.join(vscode.workspace.rootPath || '', msg.file));
+        // const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || ''; // Already declared in scope if applyRemoteOperation is one large function?
+        // Wait, applyRemoteOperation is one function.
+        // I declared `rootPath` earlier in the function when I did `// Ensure we have a shadow`.
+        // Let's reuse it.
+        const uri = vscode.Uri.file(path.join(rootPath, msg.file));
         const editor = vscode.window.visibleTextEditors.find(e => vscode.workspace.asRelativePath(e.document.uri) === msg.file);
 
         if (editor) {
@@ -531,7 +547,7 @@ export class CollaborationClient {
             });
             this.isApplyingRemoteOp = false;
         } else {
-             const fullPath = path.join(vscode.workspace.rootPath || '', msg.file);
+             const fullPath = path.join(rootPath, msg.file);
              fs.writeFileSync(fullPath, shadow);
         }
     }
@@ -580,7 +596,8 @@ export class CollaborationClient {
         if (!msg.file || this.isPathUnsafe(msg.file)) {return;}
         if (this.gitService.isIgnored(msg.file)) {return;}
 
-        const fullPath = path.join(vscode.workspace.rootPath || '', msg.file);
+        const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+        const fullPath = path.join(rootPath, msg.file);
 
         // Avoid overwriting if exists?
         if (!fs.existsSync(fullPath)) {
@@ -593,7 +610,8 @@ export class CollaborationClient {
         if (!msg.file || this.isPathUnsafe(msg.file)) {return;}
         if (this.gitService.isIgnored(msg.file)) {return;}
 
-        const fullPath = path.join(vscode.workspace.rootPath || '', msg.file);
+        const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+        const fullPath = path.join(rootPath, msg.file);
         if (fs.existsSync(fullPath)) {
             fs.unlinkSync(fullPath);
             this.shadows.delete(msg.file);
@@ -623,5 +641,48 @@ export class CollaborationClient {
             this.server = undefined;
         }
         this.webviewPanel.webview.postMessage({ type: 'disconnected' });
+    }
+
+    private handleAddReference() {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) { return; }
+
+        const selection = editor.selection;
+        const text = editor.document.getText(selection);
+        if (!text) { return; }
+
+        const file = vscode.workspace.asRelativePath(editor.document.uri);
+        const startLine = selection.start.line;
+        const endLine = selection.end.line;
+
+        // Construct Chat Message with Reference
+        // We will send a chat message that says "Shared a code reference" but includes the payload
+        const msg: ChatMessage = {
+            type: 'chat-message',
+            username: this.myUsername || 'Me', // This will be overwritten by server usually, but we need it for local structure
+            text: '', // Empty text, or we can put "Shared a reference"
+            reference: {
+                file,
+                startLine,
+                endLine,
+                content: text
+            }
+        };
+
+        this.send(msg);
+    }
+
+    private async handleOpenReference(file: string, startLine: number, endLine: number) {
+        const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+        const doc = await vscode.workspace.openTextDocument(path.join(rootPath, file));
+        const editor = await vscode.window.showTextDocument(doc);
+
+        const range = new vscode.Range(
+            new vscode.Position(startLine, 0),
+            new vscode.Position(endLine, Number.MAX_VALUE)
+        );
+
+        editor.selection = new vscode.Selection(range.start, range.end);
+        editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
     }
 }

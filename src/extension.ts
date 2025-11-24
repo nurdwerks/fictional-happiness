@@ -6,7 +6,8 @@ import * as path from 'path';
 export function activate(context: vscode.ExtensionContext) {
 	console.log('Collab Code is active!');
 
-	const gitService = new GitService(vscode.workspace.rootPath);
+    const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+	const gitService = new GitService(rootPath);
 
 	const provider = new CollabViewProvider(context.extensionUri, context, gitService);
 
