@@ -5,32 +5,278 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Collab Code</title>
     <style>
-        body { font-family: sans-serif; padding: 10px; color: var(--vscode-foreground); background-color: var(--vscode-editor-background); }
-        .section { margin-bottom: 20px; padding: 10px; border: 1px solid var(--vscode-widget-border); border-radius: 5px; }
-        h3 { margin-top: 0; }
-        input { display: block; width: 100%; margin-bottom: 10px; padding: 5px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); box-sizing: border-box; }
-        button { width: 100%; padding: 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer; }
-        button:hover { background: var(--vscode-button-hoverBackground); }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
-        .status { font-weight: bold; margin-bottom: 10px; }
-        .status.connected { color: green; }
-        .status.disconnected { color: red; }
+        body {
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            font-weight: var(--vscode-font-weight);
+            color: var(--vscode-foreground);
+            background-color: var(--vscode-editor-background);
+            padding: 0;
+            margin: 0;
+        }
 
-        /* Participant List Styles */
-        .participant-item { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; padding: 3px; border-radius: 3px; }
-        .participant-item:hover { background-color: var(--vscode-list-hoverBackground); }
-        .follow-btn, .kick-btn, .approve-btn, .reject-btn { padding: 2px 6px; font-size: 0.8em; width: auto; margin-left: 5px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; cursor: pointer;}
-        .follow-btn:hover, .kick-btn:hover, .approve-btn:hover, .reject-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
-        .follow-btn.following { background: var(--vscode-statusBarItem-warningBackground); color: var(--vscode-statusBarItem-warningForeground); }
+        h3 {
+            font-size: 11px;
+            line-height: 22px;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin: 16px 0 8px 16px;
+            opacity: 0.8;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
 
-        .kick-btn { background: var(--vscode-errorForeground); color: white; }
-        .approve-btn { background: var(--vscode-testing-iconPassed); color: white; }
-        .reject-btn { background: var(--vscode-testing-iconFailed); color: white; }
+        .section {
+            margin-bottom: 0;
+            padding: 0;
+        }
 
-        .pending-request { margin-bottom: 10px; padding: 5px; background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); border-radius: 3px; }
+        /* Identity Section Styling */
+        #identity-section {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+        #identity-section h3 {
+            margin: 0 0 8px 0;
+        }
 
-        /* Terminal Styles */
-        #terminal-output { font-family: monospace; white-space: pre-wrap; height: 150px; overflow-y: auto; background: var(--vscode-terminal-background); color: var(--vscode-terminal-foreground); border: 1px solid var(--vscode-panel-border); padding: 5px; font-size: 0.9em; }
+        /* Inputs */
+        input[type="text"],
+        input[type="number"],
+        input[type="password"],
+        textarea {
+            display: block;
+            width: 100%;
+            margin-bottom: 8px;
+            padding: 4px;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            outline: none;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+
+        input:focus, textarea:focus {
+            border-color: var(--vscode-focusBorder);
+        }
+
+        input::placeholder {
+            color: var(--vscode-input-placeholderForeground);
+        }
+
+        /* Buttons */
+        button {
+            width: 100%;
+            padding: 6px 12px;
+            margin-bottom: 8px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: 1px solid transparent;
+            cursor: pointer;
+            font-family: inherit;
+            outline-offset: 2px;
+        }
+
+        button:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        button:focus {
+            outline: 1px solid var(--vscode-focusBorder);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button.secondary {
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+
+        button.secondary:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+        }
+
+        /* Connection Section */
+        #connection-section {
+            padding: 10px 16px;
+        }
+
+        .divider {
+            text-align: center;
+            margin: 8px 0;
+            font-size: 0.9em;
+            opacity: 0.7;
+        }
+
+        /* Lists (Participants, Pending) */
+        ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .participant-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 16px;
+            cursor: default;
+        }
+
+        .participant-item:hover {
+            background-color: var(--vscode-list-hoverBackground);
+        }
+
+        /* Small buttons in lists */
+        .participant-item button {
+            width: auto;
+            padding: 2px 6px;
+            font-size: 11px;
+            margin: 0 0 0 6px;
+        }
+
+        .follow-btn {
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+
+        .follow-btn:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+        }
+
+        .follow-btn.following {
+             background: var(--vscode-statusBarItem-warningBackground);
+             color: var(--vscode-statusBarItem-warningForeground);
+        }
+
+        .kick-btn {
+            background: var(--vscode-errorForeground);
+            color: white;
+        }
+        .kick-btn:hover {
+            opacity: 0.8;
+        }
+
+        /* Pending Requests */
+        .pending-request {
+            padding: 8px 16px;
+            background: var(--vscode-list-activeSelectionBackground);
+            color: var(--vscode-list-activeSelectionForeground);
+            margin-bottom: 2px;
+        }
+
+        .pending-request button {
+            width: auto;
+            display: inline-block;
+            margin-right: 4px;
+            margin-bottom: 0;
+        }
+
+        .pending-request .approve-btn {
+             background-color: var(--vscode-testing-iconPassed);
+             color: #fff;
+        }
+        .pending-request .reject-btn {
+             background-color: var(--vscode-testing-iconFailed);
+             color: #fff;
+        }
+
+        /* Chat */
+        #chat-section {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            padding: 0 16px 16px 16px;
+        }
+
+        #chat-messages {
+            flex: 1;
+            min-height: 150px;
+            max-height: 300px;
+            overflow-y: auto;
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-input-border);
+            margin-bottom: 8px;
+            padding: 4px;
+        }
+
+        /* Terminal */
+        #terminal-output {
+            font-family: var(--vscode-editor-font-family, monospace);
+            white-space: pre-wrap;
+            height: 150px;
+            overflow-y: auto;
+            background: var(--vscode-terminal-background);
+            color: var(--vscode-terminal-foreground);
+            border: 1px solid var(--vscode-panel-border);
+            padding: 4px;
+            font-size: 0.9em;
+            margin: 0 16px 16px 16px;
+        }
+
+        /* Voice Chat Section */
+        #voice-section {
+            padding: 0 16px;
+            margin-bottom: 16px;
+        }
+
+        #voice-section label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+
+        #voice-section input[type="checkbox"] {
+            width: auto;
+            margin: 0;
+        }
+
+        details summary {
+            cursor: pointer;
+            margin-bottom: 4px;
+            color: var(--vscode-textLink-foreground);
+        }
+
+        /* Status */
+        .status {
+            padding: 8px 16px;
+            font-weight: 600;
+            background-color: var(--vscode-statusBar-background);
+            color: var(--vscode-statusBar-foreground);
+            border-bottom: 1px solid var(--vscode-panel-border);
+            display: flex;
+            align-items: center;
+        }
+
+        .status.connected {
+            background-color: var(--vscode-statusBar-noFolderBackground);
+        }
+
+        .status.disconnected {
+             /* Default status bar color usually implies idle/disconnected in this context */
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background-color: var(--vscode-scrollbarSlider-background);
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background-color: var(--vscode-scrollbarSlider-hoverBackground);
+        }
+        ::-webkit-scrollbar-thumb:active {
+            background-color: var(--vscode-scrollbarSlider-activeBackground);
+        }
     </style>
 </head>
 <body>
@@ -39,7 +285,7 @@
 
         <div class="section" id="identity-section">
              <h3>Identity</h3>
-             <div id="username-display">Loading git identity...</div>
+             <div id="username-display" style="font-size: 0.9em;">Loading git identity...</div>
         </div>
 
         <div class="section" id="connection-section">
@@ -48,12 +294,12 @@
                 <input type="number" id="local-port" placeholder="Port (e.g., 3000)">
                 <button id="btn-start-server">Start Local Server</button>
             </div>
-            <div style="text-align: center; margin: 10px 0;">OR</div>
+            <div class="divider">OR</div>
             <div id="join-server-ui">
                 <input type="text" id="remote-address" placeholder="ws://localhost:3000">
-                <button id="btn-join-server">Join Server</button>
+                <button id="btn-join-server" class="secondary">Join Server</button>
             </div>
-            <button id="btn-disconnect" style="display: none; background: var(--vscode-errorForeground);">Disconnect</button>
+            <button id="btn-disconnect" style="display: none; background: var(--vscode-errorForeground); color: white;">Disconnect</button>
         </div>
 
         <div class="section" id="pending-section" style="display: none;">
@@ -64,27 +310,26 @@
         <div class="section" id="voice-section" style="display: none;">
             <h3>Voice Chat</h3>
             <label><input type="checkbox" id="voice-toggle"> Enable Voice Chat</label>
-            <div id="voice-status">Voice: Off</div>
+            <div id="voice-status" style="font-size: 0.9em; margin-bottom: 8px; opacity: 0.8;">Voice: Off</div>
             <details>
                 <summary>STUN/TURN Settings</summary>
-                <textarea id="ice-servers" rows="4" style="width: 100%; background: var(--vscode-input-background); color: var(--vscode-input-foreground);">[{"urls":"stun:stun.l.google.com:19302"}]</textarea>
+                <textarea id="ice-servers" rows="4">[{"urls":"stun:stun.l.google.com:19302"}]</textarea>
             </details>
         </div>
 
         <div class="section" id="participants-section" style="display: none;">
             <h3>Participants</h3>
-            <ul id="participants-list" style="list-style: none; padding: 0;"></ul>
+            <ul id="participants-list"></ul>
         </div>
 
         <div class="section" id="terminal-section" style="display: none;">
             <h3>Shared Output</h3>
             <div id="terminal-output"></div>
-            <!-- Future: Input field for shared commands if we implement full terminal sharing -->
         </div>
 
         <div class="section" id="chat-section" style="display: none;">
             <h3>Chat</h3>
-            <div id="chat-messages" style="height: 150px; overflow-y: auto; background: var(--vscode-editor-background); border: 1px solid var(--vscode-input-border); margin-bottom: 10px; padding: 5px;"></div>
+            <div id="chat-messages"></div>
             <input type="text" id="chat-input" placeholder="Type a message... (@ to mention)">
             <button id="btn-send-chat">Send</button>
         </div>
