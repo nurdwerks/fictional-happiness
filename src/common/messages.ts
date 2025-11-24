@@ -19,7 +19,11 @@ export type MessageType =
   | 'terminal-data'
   | 'terminal-resize'
   | 'terminal-close'
-  | 'follow-user'; // Follow mode
+  | 'follow-user' // Follow mode
+  | 'user-request' // New: Request to join (Host view)
+  | 'approve-request' // New: Host approves
+  | 'reject-request' // New: Host rejects
+  | 'kick-user'; // New: Host kicks
 
 export interface BaseMessage {
   type: MessageType;
@@ -133,4 +137,27 @@ export interface TerminalCloseMessage extends BaseMessage {
 export interface FollowUserMessage extends BaseMessage {
     type: 'follow-user';
     targetSessionId: string | null; // null to stop following
+}
+
+// --- Host Approval Messages ---
+
+export interface UserRequestMessage extends BaseMessage {
+    type: 'user-request';
+    username: string;
+    sessionId: string;
+}
+
+export interface ApproveRequestMessage extends BaseMessage {
+    type: 'approve-request';
+    targetSessionId: string;
+}
+
+export interface RejectRequestMessage extends BaseMessage {
+    type: 'reject-request';
+    targetSessionId: string;
+}
+
+export interface KickUserMessage extends BaseMessage {
+    type: 'kick-user';
+    targetSessionId: string;
 }

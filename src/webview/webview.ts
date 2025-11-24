@@ -6,6 +6,7 @@ declare function acquireVsCodeApi(): any;
 const vscode = acquireVsCodeApi();
 
 let isConnected = false;
+let isHost = false; // Track if we are the host
 let localStream: MediaStream | null = null;
 let username: string | null = null;
 let mySessionId: string | null = null; // Store my own session ID
@@ -28,6 +29,8 @@ const iceServersInput = document.getElementById('ice-servers') as HTMLTextAreaEl
 
 const participantsSection = document.getElementById('participants-section')!;
 const participantsList = document.getElementById('participants-list')!;
+const pendingSection = document.getElementById('pending-section')!; // New
+const pendingList = document.getElementById('pending-list')!; // New
 const chatSection = document.getElementById('chat-section')!;
 const chatMessages = document.getElementById('chat-messages')!;
 const chatInput = document.getElementById('chat-input') as HTMLInputElement;
@@ -74,6 +77,10 @@ function updateState(connected: boolean) {
         participantsSection.style.display = 'block';
         chatSection.style.display = 'block';
         terminalSection.style.display = 'block';
+
+        if (isHost) {
+             // If host, maybe show other things?
+        }
     } else {
         btnStart.parentElement!.style.display = 'block';
         btnJoin.parentElement!.style.display = 'block';
@@ -83,14 +90,17 @@ function updateState(connected: boolean) {
         participantsSection.style.display = 'none';
         chatSection.style.display = 'none';
         terminalSection.style.display = 'none';
+        pendingSection.style.display = 'none';
 
         stopVoice();
         voiceToggle.checked = false;
         // Clear participants and chat?
         participantsList.innerHTML = '';
+        pendingList.innerHTML = '';
         chatMessages.innerHTML = '';
         terminalOutput.textContent = '';
         participants.length = 0; // Clear array
+        isHost = false; // Reset host status
     }
 }
 
@@ -310,6 +320,18 @@ window.addEventListener('message', event => {
         case 'my-session-id':
              mySessionId = message.sessionId;
              break;
+        case 'is-host':
+             isHost = message.value;
+             if (isHost) {
+                 usernameDisplay.textContent += " (HOST)";
+             }
+             break;
+        case 'user-request':
+             if (isHost) {
+                 pendingSection.style.display = 'block';
+                 addPendingUser(message.sessionId, message.username);
+             }
+             break;
     }
 });
 
@@ -327,24 +349,37 @@ function addUserToUI(sessionId: string, name: string, color: string) {
     nameSpan.style.fontWeight = 'bold';
     nameSpan.textContent = name;
 
-    // Follow Button
-    // Don't show follow button for self (if we knew our own ID here, but we can check name match loosely or rely on extension filtering)
-    // Actually we can check against 'username' global if it's unique enough.
-    const followBtn = document.createElement('button');
-    followBtn.className = 'follow-btn';
-    followBtn.textContent = 'Follow';
-    followBtn.onclick = () => toggleFollow(sessionId, followBtn);
+    const controls = document.createElement('div');
+    controls.style.display = 'flex';
 
-    // If already following this session (e.g. re-render), update state
-    if (followingSessionId === sessionId) {
-        followBtn.textContent = 'Unfollow';
-        followBtn.classList.add('following');
+    // Follow Button
+    if (name !== username) {
+        const followBtn = document.createElement('button');
+        followBtn.className = 'follow-btn';
+        followBtn.textContent = 'Follow';
+        followBtn.onclick = () => toggleFollow(sessionId, followBtn);
+
+        if (followingSessionId === sessionId) {
+            followBtn.textContent = 'Unfollow';
+            followBtn.classList.add('following');
+        }
+        controls.appendChild(followBtn);
+    }
+
+    // Kick Button (Host only)
+    if (isHost && name !== username) {
+        const kickBtn = document.createElement('button');
+        kickBtn.className = 'kick-btn';
+        kickBtn.textContent = 'Kick';
+        kickBtn.title = 'Kick user';
+        kickBtn.onclick = () => {
+             vscode.postMessage({ command: 'kick-user', targetSessionId: sessionId });
+        };
+        controls.appendChild(kickBtn);
     }
 
     li.appendChild(nameSpan);
-    if (name !== username) { // Simple check, ideally check session ID if available
-         li.appendChild(followBtn);
-    }
+    li.appendChild(controls);
 
     participantsList.appendChild(li);
 }
@@ -359,6 +394,50 @@ function removeUserFromUI(sessionId: string) {
         followingSessionId = null;
         // Notify extension to stop following
         vscode.postMessage({ command: 'follow-user', targetSessionId: null });
+    }
+}
+
+function addPendingUser(sessionId: string, name: string) {
+    if (document.getElementById(`pending-${sessionId}`)) { return; }
+
+    const div = document.createElement('div');
+    div.id = `pending-${sessionId}`;
+    div.className = 'pending-request';
+    div.textContent = `${name} wants to join.`;
+
+    const btnContainer = document.createElement('div');
+    btnContainer.style.marginTop = '5px';
+    btnContainer.style.display = 'flex';
+    btnContainer.style.gap = '5px';
+
+    const approveBtn = document.createElement('button');
+    approveBtn.className = 'approve-btn';
+    approveBtn.textContent = 'Approve';
+    approveBtn.onclick = () => {
+        vscode.postMessage({ command: 'approve-request', targetSessionId: sessionId });
+        div.remove();
+        checkPendingEmpty();
+    };
+
+    const rejectBtn = document.createElement('button');
+    rejectBtn.className = 'reject-btn';
+    rejectBtn.textContent = 'Reject';
+    rejectBtn.onclick = () => {
+        vscode.postMessage({ command: 'reject-request', targetSessionId: sessionId });
+        div.remove();
+        checkPendingEmpty();
+    };
+
+    btnContainer.appendChild(approveBtn);
+    btnContainer.appendChild(rejectBtn);
+    div.appendChild(btnContainer);
+
+    pendingList.appendChild(div);
+}
+
+function checkPendingEmpty() {
+    if (pendingList.children.length === 0) {
+        pendingSection.style.display = 'none';
     }
 }
 
