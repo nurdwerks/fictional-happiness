@@ -47,6 +47,20 @@
           "description": "List of TURN servers for WebRTC"
         }
       }
+    },
+    "commands": [
+      {
+        "command": "collabCode.addReference",
+        "title": "Add Code Reference to Chat"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "collabCode.addReference",
+          "group": "collab"
+        }
+      ]
     }
   },
   "scripts": {

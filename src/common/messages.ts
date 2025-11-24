@@ -67,12 +67,20 @@ export interface FileInitMessage extends BaseMessage {
     version: number;
 }
 
+export interface CodeReference {
+    file: string;
+    startLine: number;
+    endLine: number;
+    content: string;
+}
+
 export interface ChatMessage extends BaseMessage {
     type: 'chat-message';
     text: string;
     username: string;
     color?: string;
     timestamp?: number;
+    reference?: CodeReference;
 }
 
 export interface UserListMessage extends BaseMessage {
