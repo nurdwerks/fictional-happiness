@@ -45,12 +45,16 @@ export class CollaborationClient {
 
     private webviewReadyPromise: Promise<void>;
     private resolveWebviewReady!: () => void;
+    private outputChannel: vscode.OutputChannel;
 
     constructor(
         private context: vscode.ExtensionContext,
         private webviewPanel: vscode.WebviewPanel,
         private gitService: GitService
     ) {
+        this.outputChannel = vscode.window.createOutputChannel("Collab Code Server");
+        this.context.subscriptions.push(this.outputChannel);
+
         this.webviewReadyPromise = new Promise((resolve) => {
             this.resolveWebviewReady = resolve;
         });
@@ -455,7 +459,10 @@ export class CollaborationClient {
     }
 
     private async startLocalServer(port: number) {
-        this.server = new CollaborationServer(undefined, port);
+        this.outputChannel.show(true);
+        this.server = new CollaborationServer(undefined, port, (msg) => {
+            this.outputChannel.appendLine(`[${new Date().toLocaleTimeString()}] ${msg}`);
+        });
         this.server.onClientApproved = (targetSessionId) => {
             this.syncWorkspaceToClient(targetSessionId);
         };
