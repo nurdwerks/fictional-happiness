@@ -347,7 +347,7 @@ function addUserToUI(sessionId: string, name: string, color: string) {
     const nameSpan = document.createElement('span');
     nameSpan.style.color = color;
     nameSpan.style.fontWeight = 'bold';
-    nameSpan.textContent = name;
+    nameSpan.textContent = `${name} (${sessionId.substring(0, 6)})`;
 
     const controls = document.createElement('div');
     controls.style.display = 'flex';
@@ -403,7 +403,7 @@ function addPendingUser(sessionId: string, name: string) {
     const div = document.createElement('div');
     div.id = `pending-${sessionId}`;
     div.className = 'pending-request';
-    div.textContent = `${name} wants to join.`;
+    div.textContent = `${name} (${sessionId.substring(0, 6)}) wants to join.`;
 
     const btnContainer = document.createElement('div');
     btnContainer.style.marginTop = '5px';
