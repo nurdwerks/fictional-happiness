@@ -83,13 +83,10 @@ export class CollaborationClient {
         this.registerEditorListeners();
         this.initializeOpenEditors();
 
-        // Start Local Server Immediately
+        // Start Local Server Immediately (WebSocket disabled initially)
         const config = vscode.workspace.getConfiguration('collabCode');
         const defaultPort = config.get('defaultPort') as number || 3000;
-        this.startHostServer(defaultPort).then(() => {
-             // Connect locally
-             this.connect(`ws://localhost:${defaultPort}`);
-        });
+        this.startHostServer(defaultPort);
 
         // Listen for configuration changes
         vscode.workspace.onDidChangeConfiguration(e => {
@@ -475,13 +472,30 @@ export class CollaborationClient {
     }
 
     private async startHostServer(port: number) {
+        if (this.server) {
+            this.server.close();
+        }
         this.outputChannel.show(true);
-        this.server = new CollaborationServer(undefined, port, (msg) => {
-            this.outputChannel.appendLine(`[${new Date().toLocaleTimeString()}] ${msg}`);
-        });
-        this.server.onClientApproved = (targetSessionId) => {
-            this.syncWorkspaceToClient(targetSessionId);
-        };
+        try {
+            this.server = new CollaborationServer(undefined, port, (msg) => {
+                this.outputChannel.appendLine(`[${new Date().toLocaleTimeString()}] ${msg}`);
+            });
+            this.server.onClientApproved = (targetSessionId) => {
+                this.syncWorkspaceToClient(targetSessionId);
+            };
+            this.server.onPortChange = (newPort) => {
+                this.outputChannel.appendLine(`Restarting server on port ${newPort}...`);
+                // Restart server on new port
+                // We need to defer this slightly to ensure response is sent
+                setTimeout(() => {
+                    this.startHostServer(newPort).then(() => {
+                        // Auto-connect logic handled by webview reconnect
+                    });
+                }, 100);
+            };
+        } catch (e) {
+            vscode.window.showErrorMessage(`Failed to start server on port ${port}: ${(e as any).message}`);
+        }
         // By default, external connections are DISABLED in server.ts
     }
 
