@@ -15,10 +15,7 @@
     "Other"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": [
-    "onView:collabCodeView",
-    "onCommand:collabCode.addReference"
-  ],
+  "activationEvents": [],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
