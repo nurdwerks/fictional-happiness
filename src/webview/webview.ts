@@ -8,6 +8,7 @@ const vscode = acquireVsCodeApi();
 let isConnected = false;
 let localStream: MediaStream | null = null;
 let username: string | null = null;
+let mySessionId: string | null = null; // Store my own session ID
 
 // Map to store peer connections for mesh topology
 const peers = new Map<string, RTCPeerConnection>();
@@ -31,6 +32,13 @@ const chatSection = document.getElementById('chat-section')!;
 const chatMessages = document.getElementById('chat-messages')!;
 const chatInput = document.getElementById('chat-input') as HTMLInputElement;
 const btnSendChat = document.getElementById('btn-send-chat') as HTMLButtonElement;
+
+// Terminal UI
+const terminalSection = document.getElementById('terminal-section')!;
+const terminalOutput = document.getElementById('terminal-output')!;
+
+// Follow Mode State
+let followingSessionId: string | null = null;
 
 // Mentions State
 let mentionActive = false;
@@ -65,6 +73,7 @@ function updateState(connected: boolean) {
         voiceSection.style.display = 'block';
         participantsSection.style.display = 'block';
         chatSection.style.display = 'block';
+        terminalSection.style.display = 'block';
     } else {
         btnStart.parentElement!.style.display = 'block';
         btnJoin.parentElement!.style.display = 'block';
@@ -73,12 +82,15 @@ function updateState(connected: boolean) {
         voiceSection.style.display = 'none';
         participantsSection.style.display = 'none';
         chatSection.style.display = 'none';
+        terminalSection.style.display = 'none';
 
         stopVoice();
         voiceToggle.checked = false;
         // Clear participants and chat?
         participantsList.innerHTML = '';
         chatMessages.innerHTML = '';
+        terminalOutput.textContent = '';
+        participants.length = 0; // Clear array
     }
 }
 
@@ -247,14 +259,6 @@ window.addEventListener('message', event => {
             usernameDisplay.textContent = username ? `Logged in as: ${username}` : 'Error: git config user.name not set';
 
             if (message.iceServers) {
-                 // Format for our simple text area which expects JSON string
-                 // Only using the first STUN server for simplicity in the UI default,
-                 // but real logic should use the array.
-                 // Actually, let's just populate the input.
-                 // The input expects a JSON array of RTCIceServer objects OR just strings?
-                 // The default text is `[{"urls":"stun:..."}]`.
-                 // The extension passes an array of strings (from package.json default).
-
                  const formatted = message.iceServers.map((url: string) => ({ urls: url }));
                  iceServersInput.value = JSON.stringify(formatted);
             }
@@ -278,6 +282,10 @@ window.addEventListener('message', event => {
             initiateConnection(message.sessionId);
             break;
         case 'user-list':
+            // If we receive a full list, we should probably clear and rebuild or merge?
+            // For now, let's just clear and rebuild to be safe (simple)
+            participantsList.innerHTML = '';
+            participants.length = 0;
             message.users.forEach((u: any) => addUserToUI(u.sessionId, u.username, u.color));
             break;
         case 'user-left':
@@ -286,17 +294,49 @@ window.addEventListener('message', event => {
         case 'chat-message':
             addChatMessage(message);
             break;
+        // Shared Terminal Data
+        case 'terminal-data':
+            appendTerminalData(message.data);
+            break;
+        case 'my-session-id':
+             mySessionId = message.sessionId;
+             break;
     }
 });
 
 function addUserToUI(sessionId: string, name: string, color: string) {
     if (document.getElementById(`user-${sessionId}`)) {return;}
+
     participants.push({ sessionId, username: name, color });
+
     const li = document.createElement('li');
     li.id = `user-${sessionId}`;
-    li.style.color = color;
-    li.style.fontWeight = 'bold';
-    li.textContent = name;
+    li.className = 'participant-item';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.style.color = color;
+    nameSpan.style.fontWeight = 'bold';
+    nameSpan.textContent = name;
+
+    // Follow Button
+    // Don't show follow button for self (if we knew our own ID here, but we can check name match loosely or rely on extension filtering)
+    // Actually we can check against 'username' global if it's unique enough.
+    const followBtn = document.createElement('button');
+    followBtn.className = 'follow-btn';
+    followBtn.textContent = 'Follow';
+    followBtn.onclick = () => toggleFollow(sessionId, followBtn);
+
+    // If already following this session (e.g. re-render), update state
+    if (followingSessionId === sessionId) {
+        followBtn.textContent = 'Unfollow';
+        followBtn.classList.add('following');
+    }
+
+    li.appendChild(nameSpan);
+    if (name !== username) { // Simple check, ideally check session ID if available
+         li.appendChild(followBtn);
+    }
+
     participantsList.appendChild(li);
 }
 
@@ -305,6 +345,37 @@ function removeUserFromUI(sessionId: string) {
     if (el) {el.remove();}
     const idx = participants.findIndex(p => p.sessionId === sessionId);
     if (idx !== -1) { participants.splice(idx, 1); }
+
+    if (followingSessionId === sessionId) {
+        followingSessionId = null;
+        // Notify extension to stop following
+        vscode.postMessage({ command: 'follow-user', targetSessionId: null });
+    }
+}
+
+function toggleFollow(sessionId: string, btn: HTMLButtonElement) {
+    if (followingSessionId === sessionId) {
+        // Unfollow
+        followingSessionId = null;
+        btn.textContent = 'Follow';
+        btn.classList.remove('following');
+        vscode.postMessage({ command: 'follow-user', targetSessionId: null });
+    } else {
+        // Follow this user
+        // Unfollow previous if any
+        if (followingSessionId) {
+             const prevBtn = document.querySelector(`#user-${followingSessionId} .follow-btn`);
+             if (prevBtn) {
+                 prevBtn.textContent = 'Follow';
+                 prevBtn.classList.remove('following');
+             }
+        }
+
+        followingSessionId = sessionId;
+        btn.textContent = 'Unfollow';
+        btn.classList.add('following');
+        vscode.postMessage({ command: 'follow-user', targetSessionId: sessionId });
+    }
 }
 
 function addChatMessage(message: any) {
@@ -399,6 +470,16 @@ function addChatMessage(message: any) {
 
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function appendTerminalData(data: string) {
+    // Append to terminal output
+    // Simple text append for now.
+    // In a real app we would use xterm.js
+    const span = document.createElement('span');
+    span.textContent = data;
+    terminalOutput.appendChild(span);
+    terminalOutput.scrollTop = terminalOutput.scrollHeight;
 }
 
 // --- WebRTC Logic ---

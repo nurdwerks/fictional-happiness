@@ -14,7 +14,12 @@ export type MessageType =
   | 'file-init' // Server sending initial file content to client
   | 'webrtc-signal'
   | 'ack' // Acknowledgment for joining
-  | 'error';
+  | 'error'
+  | 'terminal-create' // Shared Terminal
+  | 'terminal-data'
+  | 'terminal-resize'
+  | 'terminal-close'
+  | 'follow-user'; // Follow mode
 
 export interface BaseMessage {
   type: MessageType;
@@ -92,4 +97,40 @@ export interface UserLeftMessage extends BaseMessage {
     type: 'user-left';
     sessionId: string;
     username?: string;
+}
+
+// --- Shared Terminal Messages ---
+
+export interface TerminalCreateMessage extends BaseMessage {
+    type: 'terminal-create';
+    termId: string;
+    name: string;
+}
+
+export interface TerminalDataMessage extends BaseMessage {
+    type: 'terminal-data';
+    termId: string;
+    data: string;
+}
+
+export interface TerminalResizeMessage extends BaseMessage {
+    type: 'terminal-resize';
+    termId: string;
+    cols: number;
+    rows: number;
+}
+
+export interface TerminalCloseMessage extends BaseMessage {
+    type: 'terminal-close';
+    termId: string;
+}
+
+// --- Follow Mode Message (Client to Webview, but maybe broadcast if we want to sync follow state?)
+// Actually, follow mode is usually local to the client (I follow X).
+// But we might want to tell the other user "I am following you".
+// For now, let's keep it local. But the webview needs to tell the extension "Follow X".
+
+export interface FollowUserMessage extends BaseMessage {
+    type: 'follow-user';
+    targetSessionId: string | null; // null to stop following
 }

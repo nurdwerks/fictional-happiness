@@ -8,13 +8,23 @@
         body { font-family: sans-serif; padding: 10px; color: var(--vscode-foreground); background-color: var(--vscode-editor-background); }
         .section { margin-bottom: 20px; padding: 10px; border: 1px solid var(--vscode-widget-border); border-radius: 5px; }
         h3 { margin-top: 0; }
-        input { display: block; width: 100%; margin-bottom: 10px; padding: 5px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); }
+        input { display: block; width: 100%; margin-bottom: 10px; padding: 5px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); box-sizing: border-box; }
         button { width: 100%; padding: 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer; }
         button:hover { background: var(--vscode-button-hoverBackground); }
         button:disabled { opacity: 0.5; cursor: not-allowed; }
         .status { font-weight: bold; margin-bottom: 10px; }
         .status.connected { color: green; }
         .status.disconnected { color: red; }
+
+        /* Participant List Styles */
+        .participant-item { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; padding: 3px; border-radius: 3px; }
+        .participant-item:hover { background-color: var(--vscode-list-hoverBackground); }
+        .follow-btn { padding: 2px 6px; font-size: 0.8em; width: auto; margin-left: 5px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+        .follow-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
+        .follow-btn.following { background: var(--vscode-statusBarItem-warningBackground); color: var(--vscode-statusBarItem-warningForeground); }
+
+        /* Terminal Styles */
+        #terminal-output { font-family: monospace; white-space: pre-wrap; height: 150px; overflow-y: auto; background: var(--vscode-terminal-background); color: var(--vscode-terminal-foreground); border: 1px solid var(--vscode-panel-border); padding: 5px; font-size: 0.9em; }
     </style>
 </head>
 <body>
@@ -55,10 +65,16 @@
             <ul id="participants-list" style="list-style: none; padding: 0;"></ul>
         </div>
 
+        <div class="section" id="terminal-section" style="display: none;">
+            <h3>Shared Output</h3>
+            <div id="terminal-output"></div>
+            <!-- Future: Input field for shared commands if we implement full terminal sharing -->
+        </div>
+
         <div class="section" id="chat-section" style="display: none;">
             <h3>Chat</h3>
             <div id="chat-messages" style="height: 150px; overflow-y: auto; background: var(--vscode-editor-background); border: 1px solid var(--vscode-input-border); margin-bottom: 10px; padding: 5px;"></div>
-            <input type="text" id="chat-input" placeholder="Type a message...">
+            <input type="text" id="chat-input" placeholder="Type a message... (@ to mention)">
             <button id="btn-send-chat">Send</button>
         </div>
     </div>

@@ -1,13 +1,15 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as cp from 'child_process';
 import WebSocket from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 import { GitService } from './gitService';
 import {
     MessageType, BaseMessage, JoinMessage, TextOperationMessage,
     CursorSelectionMessage, WebRTCSignalMessage, FileCreateMessage,
-    FileInitMessage, FileDeleteMessage, ChatMessage
+    FileInitMessage, FileDeleteMessage, ChatMessage, FollowUserMessage,
+    TerminalDataMessage
 } from '../common/messages';
 import { CollaborationServer } from '../server/server';
 
@@ -36,6 +38,9 @@ export class CollaborationClient {
 
     // Session ID (assigned by server)
     private sessionId: string | undefined;
+
+    // Follow Mode
+    private followingSessionId: string | null = null;
 
     constructor(
         private context: vscode.ExtensionContext,
@@ -95,13 +100,23 @@ export class CollaborationClient {
                 case 'openReference':
                     this.handleOpenReference(message.file, message.startLine, message.endLine);
                     break;
+                case 'follow-user':
+                    this.followingSessionId = message.targetSessionId;
+                    if (this.followingSessionId) {
+                         vscode.window.showInformationMessage(`Following user session: ${this.followingSessionId}`);
+                    } else {
+                         vscode.window.showInformationMessage(`Stopped following user.`);
+                    }
+                    break;
             }
         });
 
         // Register Command to add reference
-        vscode.commands.registerCommand('collabCode.addReference', () => {
-             this.handleAddReference();
-        });
+        this.context.subscriptions.push(
+            vscode.commands.registerCommand('collabCode.addReference', () => {
+                 this.handleAddReference();
+            })
+        );
     }
 
     private initializeOpenEditors() {
@@ -233,6 +248,55 @@ export class CollaborationClient {
                  this.send(msg);
              });
         });
+
+        // Listen for Shared Command
+        this.context.subscriptions.push(
+            vscode.commands.registerCommand('collabCode.runSharedCommand', async () => {
+                 const cmd = await vscode.window.showInputBox({ prompt: "Enter command to run and share output" });
+                 if (cmd) {
+                     this.runSharedCommand(cmd);
+                 }
+            })
+        );
+    }
+
+    private runSharedCommand(command: string) {
+        const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!rootPath) { return; }
+
+        this.sendTerminalData(`> ${command}\n`);
+
+        // Use spawn to support streaming
+        // We need to parse command string roughly to split args for spawn, or use shell: true
+        // shell: true is simpler for arbitrary commands
+        const process = cp.spawn(command, [], { cwd: rootPath, shell: true });
+
+        process.stdout.on('data', (data) => {
+            this.sendTerminalData(data.toString());
+        });
+
+        process.stderr.on('data', (data) => {
+            this.sendTerminalData(data.toString());
+        });
+
+        process.on('error', (err) => {
+             this.sendTerminalData(`Error: ${err.message}\n`);
+        });
+
+        process.on('close', (code) => {
+             this.sendTerminalData(`\nProcess exited with code ${code}\n`);
+        });
+    }
+
+    private sendTerminalData(data: string) {
+        const msg: TerminalDataMessage = {
+            type: 'terminal-data',
+            termId: 'shared-1', // simplified
+            data: data
+        };
+        this.send(msg);
+        // Also show locally
+        this.webviewPanel.webview.postMessage(msg);
     }
 
     private generateOp(shadow: string, change: vscode.TextDocumentContentChangeEvent): any[] {
@@ -376,6 +440,7 @@ export class CollaborationClient {
                 break;
             case 'welcome':
                 this.sessionId = msg.sessionId;
+                this.webviewPanel.webview.postMessage({ type: 'my-session-id', sessionId: msg.sessionId });
                 break;
             case 'user-joined':
             case 'user-left':
@@ -383,6 +448,9 @@ export class CollaborationClient {
                 this.webviewPanel.webview.postMessage(msg);
                 break;
             case 'chat-message':
+                this.webviewPanel.webview.postMessage(msg);
+                break;
+            case 'terminal-data':
                 this.webviewPanel.webview.postMessage(msg);
                 break;
         }
@@ -553,6 +621,11 @@ export class CollaborationClient {
     }
 
     private updateRemoteCursor(msg: CursorSelectionMessage) {
+        // Follow Mode Logic
+        if (this.followingSessionId && msg.sessionId === this.followingSessionId && msg.file) {
+            this.handleFollowUser(msg);
+        }
+
         if (!msg.file || !msg.sessionId) {return;}
 
         const editor = vscode.window.visibleTextEditors.find(e => vscode.workspace.asRelativePath(e.document.uri) === msg.file);
@@ -590,6 +663,34 @@ export class CollaborationClient {
         const range = new vscode.Range(startPos, endPos);
 
         editor.setDecorations(userDecoration, [range]);
+    }
+
+    private async handleFollowUser(msg: CursorSelectionMessage) {
+        if (!msg.file) { return; }
+        const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+
+        // 1. Ensure file is open
+        const uri = vscode.Uri.file(path.join(rootPath, msg.file));
+
+        try {
+            // Check if visible
+            let editor = vscode.window.visibleTextEditors.find(e => vscode.workspace.asRelativePath(e.document.uri) === msg.file);
+
+            if (!editor) {
+                // Open it
+                const doc = await vscode.workspace.openTextDocument(uri);
+                editor = await vscode.window.showTextDocument(doc, { preview: false }); // keep it open
+            }
+
+            // 2. Reveal Range (Scroll to them)
+            const startPos = editor.document.positionAt(msg.start);
+            const endPos = editor.document.positionAt(msg.end);
+            const range = new vscode.Range(startPos, endPos);
+
+            editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+        } catch (e) {
+            console.warn(`Follow mode: Could not open or scroll to ${msg.file}`, e);
+        }
     }
 
     private handleFileCreate(msg: FileCreateMessage) {
