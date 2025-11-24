@@ -256,11 +256,20 @@ window.addEventListener('message', event => {
     switch (message.type) {
         case 'identity':
             username = message.username;
-            usernameDisplay.textContent = username ? `Logged in as: ${username}` : 'Error: git config user.name not set';
+            usernameDisplay.textContent = username ? `Logged in as: ${username}` : 'Error: git config user.name not set. Set "collabCode.username" in settings or git config.';
 
             if (message.iceServers) {
                  const formatted = message.iceServers.map((url: string) => ({ urls: url }));
                  iceServersInput.value = JSON.stringify(formatted);
+            }
+
+            if (message.defaultPort) {
+                inputPort.value = message.defaultPort;
+                // If the remote address placeholder is default, update it too
+                if (inputAddress.getAttribute('placeholder') === "ws://localhost:3000") {
+                    inputAddress.placeholder = `ws://localhost:${message.defaultPort}`;
+                    inputAddress.value = `ws://localhost:${message.defaultPort}`;
+                }
             }
 
             if (!username) {
