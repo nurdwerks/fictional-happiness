@@ -14,7 +14,8 @@ To create a new release, run one of the following commands in your terminal. The
 1. Bump the version in `package.json`.
 2. Create a git commit with the version number.
 3. Create a git tag (e.g., `v0.0.2`).
-4. Push the commit and tag to GitHub.
+4. Create a release branch (e.g., `release/v0.0.2`).
+5. Push the commit, tag, and release branch to GitHub.
 
 ### Patch Release (0.0.x -> 0.0.x+1)
 Use this for bug fixes or small changes.
