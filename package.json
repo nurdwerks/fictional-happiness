@@ -1,0 +1,80 @@
+{
+  "name": "collab-code",
+  "displayName": "Collab Code OT",
+  "description": "Operational Transformation collaboration plugin with WebRTC voice chat.",
+  "version": "0.0.1",
+  "publisher": "jules",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "collab-code-sidebar",
+          "title": "Collab Code",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "collab-code-sidebar": [
+        {
+          "type": "webview",
+          "id": "collabCodeView",
+          "name": "Collab Code"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Collab Code",
+      "properties": {
+        "collabCode.stunServers": {
+          "type": "array",
+          "default": [
+            "stun:stun.l.google.com:19302"
+          ],
+          "description": "List of STUN servers for WebRTC"
+        },
+        "collabCode.turnServers": {
+          "type": "array",
+          "default": [],
+          "description": "List of TURN servers for WebRTC"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/uuid": "^9.0.0",
+    "@types/vscode": "^1.90.0",
+    "@types/ws": "^8.5.0",
+    "copy-webpack-plugin": "^11.0.0",
+    "ts-loader": "^9.0.0",
+    "typescript": "^5.0.0",
+    "webpack": "^5.0.0",
+    "webpack-cli": "^5.0.0"
+  },
+  "dependencies": {
+    "ignore": "^5.0.0",
+    "ot-text": "^1.0.0",
+    "uuid": "^9.0.0",
+    "ws": "^8.0.0"
+  }
+}
