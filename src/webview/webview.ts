@@ -86,10 +86,21 @@ interface Participant {
 const participants: Participant[] = [];
 
 // Helper to update UI state
-function updateState(connected: boolean) {
+function updateState(connected: boolean, hostStatus?: any) {
     isConnected = connected;
     statusDisplay.className = connected ? 'status connected' : 'status disconnected';
     statusDisplay.textContent = connected ? 'Connected' : 'Disconnected';
+
+    // Host specific logic
+    if (hostStatus) {
+        if (hostStatus.wsEnabled) {
+            btnStartHost.textContent = 'Allow External Connections';
+            btnStartHost.title = 'Your collaboration server is running and accepting local connections. Click to allow external connections.';
+        } else {
+            btnStartHost.textContent = 'Start Hosting';
+            btnStartHost.title = 'Start your collaboration server.';
+        }
+    }
 
     const startServerUI = document.getElementById('start-server-ui')!;
     const joinServerUI = document.getElementById('join-server-ui')!;
@@ -407,6 +418,9 @@ window.addEventListener('message', event => {
                 btnStartHost.disabled = true;
                 btnJoin.disabled = true;
             }
+
+            // After getting identity, check server status
+            checkIdentityAndStatus();
             break;
         case 'connected':
             updateState(true);
@@ -455,6 +469,48 @@ window.addEventListener('message', event => {
              break;
     }
 });
+
+async function checkIdentityAndStatus() {
+    // 1. Check if server has our identity
+    const identityUrl = `${getRestBaseUrl()}/identity`;
+    let hasIdentity = false;
+    try {
+        const res = await fetch(identityUrl);
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.username) {
+                hasIdentity = true;
+            }
+        }
+    } catch (e) {
+        // Ignore, probably server not running yet.
+    }
+
+    // 2. If not, and we have one, send it
+    if (!hasIdentity && username) {
+        try {
+            await fetch(identityUrl, {
+                method: 'POST',
+                body: JSON.stringify({ username })
+            });
+        } catch (e) {
+            // Ignore
+        }
+    }
+
+    // 3. Get host status
+    try {
+        const statusUrl = `${getRestBaseUrl()}/status`;
+        const res = await fetch(statusUrl);
+        if (res.ok) {
+            const data = await res.json();
+            // Update UI based on host status.
+            updateState(false, data); // We are not websocket-connected yet.
+        }
+    } catch (e) {
+        // Server likely not running, which is fine.
+    }
+}
 
 function addUserToUI(sessionId: string, name: string, color: string, activeFile?: string, cursorLine?: number, cursorChar?: number) {
     let participant = participants.find(p => p.sessionId === sessionId);
