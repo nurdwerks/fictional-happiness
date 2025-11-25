@@ -789,6 +789,7 @@ export class CollaborationClient {
                         const start = editor.document.positionAt(index);
                         const end = editor.document.positionAt(index + c.d.length);
                         editBuilder.delete(new vscode.Range(start, end));
+                        index += c.d.length;
                     }
                 });
             });
