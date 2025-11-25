@@ -17,6 +17,10 @@ interface Client {
     username: string;
     color: string;
     status: 'pending' | 'approved';
+    // State
+    activeFile?: string;
+    cursorLine?: number;
+    cursorChar?: number;
 }
 
 interface DocumentState {
@@ -157,7 +161,10 @@ export class CollaborationServer {
                     username: c.username,
                     color: c.color,
                     status: c.status,
-                    isHost: c.sessionId === this.hostSessionId
+                    isHost: c.sessionId === this.hostSessionId,
+                    activeFile: c.activeFile,
+                    cursorLine: c.cursorLine,
+                    cursorChar: c.cursorChar
                 }));
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify(clientList));
@@ -355,8 +362,20 @@ export class CollaborationServer {
             case 'cursor-selection':
                 // Simply broadcast to others
                 const cursorMsg = message as CursorSelectionMessage;
-                // Attach metadata so clients know who it is
+
+                // Update client state
                 if (client) {
+                    if (cursorMsg.file) {
+                        client.activeFile = cursorMsg.file;
+                    }
+                    if (cursorMsg.cursorLine !== undefined) {
+                        client.cursorLine = cursorMsg.cursorLine;
+                    }
+                    if (cursorMsg.cursorChar !== undefined) {
+                        client.cursorChar = cursorMsg.cursorChar;
+                    }
+
+                    // Attach metadata so clients know who it is
                     cursorMsg.color = client.color;
                     cursorMsg.username = client.username;
                     this.broadcast(ws, cursorMsg);
@@ -403,7 +422,10 @@ export class CollaborationServer {
                 .map(c => ({
                     sessionId: c.sessionId,
                     username: c.username,
-                    color: c.color
+                    color: c.color,
+                    activeFile: c.activeFile,
+                    cursorLine: c.cursorLine,
+                    cursorChar: c.cursorChar
                 }))
         };
         client.ws.send(JSON.stringify(userList));
