@@ -20,6 +20,7 @@ export type MessageType =
   | 'terminal-resize'
   | 'terminal-close'
   | 'follow-user' // Follow mode
+  | 'jump-to-user' // New: Jump to user
   | 'user-request' // New: Request to join (Host view)
   | 'approve-request' // New: Host approves
   | 'reject-request' // New: Host rejects
@@ -46,6 +47,8 @@ export interface CursorSelectionMessage extends BaseMessage {
   type: 'cursor-selection';
   start: number; // Offset
   end: number;
+  cursorLine?: number; // New
+  cursorChar?: number; // New
   color?: string;
   username?: string;
 }
@@ -94,7 +97,14 @@ export interface ChatMessage extends BaseMessage {
 
 export interface UserListMessage extends BaseMessage {
     type: 'user-list';
-    users: { sessionId: string; username: string; color: string }[];
+    users: {
+        sessionId: string;
+        username: string;
+        color: string;
+        activeFile?: string;
+        cursorLine?: number;
+        cursorChar?: number;
+    }[];
 }
 
 export interface UserLeftMessage extends BaseMessage {
@@ -129,14 +139,17 @@ export interface TerminalCloseMessage extends BaseMessage {
     termId: string;
 }
 
-// --- Follow Mode Message (Client to Webview, but maybe broadcast if we want to sync follow state?)
-// Actually, follow mode is usually local to the client (I follow X).
-// But we might want to tell the other user "I am following you".
-// For now, let's keep it local. But the webview needs to tell the extension "Follow X".
-
 export interface FollowUserMessage extends BaseMessage {
     type: 'follow-user';
     targetSessionId: string | null; // null to stop following
+}
+
+export interface JumpToUserMessage extends BaseMessage {
+    type: 'jump-to-user';
+    targetSessionId: string;
+    file?: string;
+    line?: number;
+    char?: number;
 }
 
 // --- Host Approval Messages ---

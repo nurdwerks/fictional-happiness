@@ -75,7 +75,15 @@ mentionList.style.zIndex = '1000';
 document.body.appendChild(mentionList);
 
 // Participants Data
-const participants: { sessionId: string; username: string; color: string }[] = [];
+interface Participant {
+    sessionId: string;
+    username: string;
+    color: string;
+    activeFile?: string;
+    cursorLine?: number;
+    cursorChar?: number;
+}
+const participants: Participant[] = [];
 
 // Helper to update UI state
 function updateState(connected: boolean) {
@@ -147,38 +155,7 @@ btnStartHost.addEventListener('click', async () => {
 
     // Call REST API to start/enable host
     try {
-        // We use getRestBaseUrl() which defaults to localhost:3000 (or whatever port input has if we updated it manually?)
-        // Wait, if we are starting the host, we must talk to the ALREADY RUNNING server.
-        // The identity message gave us the default port. We should probably try that first if input is different?
-        // But if the server is running on defaultPort, and we request newPort, we send to defaultPort.
-
-        // Logic: Try to call /start on the *current* assumption of where server is.
-        // If we haven't connected, we assume localhost:3000 (or whatever identity said).
-        // Since we can't easily know the *actual* running port if it differs from inputPort without checking identity again,
-        // we will assume `inputAddress` placeholder or `defaultPort` logic.
-
-        // For simplicity, let's assume the server is running on the port specified in `inputPort` (if it was pre-filled)
-        // OR we should try the default port.
-
-        // Actually, if the user changes the port in input, they want to start on THAT port.
-        // But we have to send the command to the OLD port.
-        // This is tricky. The UI doesn't track "old port".
-        // However, usually `inputPort` is 3000.
-        // Let's try fetching from localhost:3000 (default) if fetch to inputPort fails?
-        // Or just fetch to `getRestBaseUrl()` which derives from `inputPort`.
-        // If the server is ALREADY on inputPort, it works.
-        // If server is on 3000 and user types 4000, `getRestBaseUrl` returns localhost:4000. Fetch fails.
-
-        // We need to know the *control* port.
-        // Let's try localhost:3000 (hardcoded fallback) if the derived URL fails?
-        // Or better: `identity` message populated `inputPort` with `defaultPort`.
-        // If user changed it, we might be in trouble.
-        // But we can't solve everything. Let's assume user calls it on the correct port or we try the default.
-
         let url = `${getRestBaseUrl()}/start`;
-
-        // If request fails, maybe server is on default 3000?
-
         const body = JSON.stringify({ port });
 
         let res;
@@ -441,17 +418,20 @@ window.addEventListener('message', event => {
             handleWebRTCSignalRefined(message.signal, message.senderId);
             break;
         case 'user-joined':
-            addUserToUI(message.sessionId, message.username, message.color);
+            addUserToUI(message.sessionId, message.username, message.color, message.activeFile, message.cursorLine, message.cursorChar);
             initiateConnection(message.sessionId);
             break;
         case 'user-list':
             participantsList.innerHTML = '';
             participants.length = 0;
-            message.users.forEach((u: any) => addUserToUI(u.sessionId, u.username, u.color));
+            message.users.forEach((u: any) => addUserToUI(u.sessionId, u.username, u.color, u.activeFile, u.cursorLine, u.cursorChar));
             break;
         case 'user-left':
             removeUserFromUI(message.sessionId);
             break;
+        case 'cursor-selection':
+             updateUserCursor(message.sessionId, message.file, message.cursorLine, message.cursorChar);
+             break;
         case 'chat-message':
             addChatMessage(message);
             break;
@@ -476,51 +456,151 @@ window.addEventListener('message', event => {
     }
 });
 
-function addUserToUI(sessionId: string, name: string, color: string) {
-    if (document.getElementById(`user-${sessionId}`)) {return;}
+function addUserToUI(sessionId: string, name: string, color: string, activeFile?: string, cursorLine?: number, cursorChar?: number) {
+    let participant = participants.find(p => p.sessionId === sessionId);
+    if (!participant) {
+        participant = { sessionId, username: name, color, activeFile, cursorLine, cursorChar };
+        participants.push(participant);
+    } else {
+        // Update existing just in case
+        participant.username = name;
+        participant.color = color;
+        if (activeFile) { participant.activeFile = activeFile; }
+        if (cursorLine !== undefined) { participant.cursorLine = cursorLine; }
+        if (cursorChar !== undefined) { participant.cursorChar = cursorChar; }
+    }
 
-    participants.push({ sessionId, username: name, color });
+    let li = document.getElementById(`user-${sessionId}`);
+    if (!li) {
+        li = document.createElement('li');
+        li.id = `user-${sessionId}`;
+        li.className = 'participant-item';
+        // Click to jump
+        li.style.cursor = 'pointer';
+        li.title = "Click to jump to user's cursor";
+        li.addEventListener('click', (e) => {
+            // Prevent if clicking button
+            if ((e.target as HTMLElement).tagName === 'BUTTON') { return; }
 
-    const li = document.createElement('li');
-    li.id = `user-${sessionId}`;
-    li.className = 'participant-item';
+            const p = participants.find(part => part.sessionId === sessionId);
+            if (p && p.activeFile) {
+                vscode.postMessage({
+                    command: 'jump-to-user',
+                    targetSessionId: sessionId,
+                    file: p.activeFile,
+                    line: p.cursorLine,
+                    char: p.cursorChar
+                });
+            } else {
+                // Should show message?
+                // alert("User has no active file.");
+            }
+        });
+
+        participantsList.appendChild(li);
+    }
+
+    // Update Content
+    renderUserItem(li, participant);
+}
+
+function renderUserItem(li: HTMLElement, p: Participant) {
+    li.innerHTML = ''; // Clear and rebuild
+
+    const container = document.createElement('div');
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.width = '100%';
+
+    const topRow = document.createElement('div');
+    topRow.style.display = 'flex';
+    topRow.style.justifyContent = 'space-between';
+    topRow.style.alignItems = 'center';
 
     const nameSpan = document.createElement('span');
-    nameSpan.style.color = color;
+    nameSpan.style.color = p.color;
     nameSpan.style.fontWeight = 'bold';
-    nameSpan.textContent = `${name} (${sessionId.substring(0, 6)})`;
+    nameSpan.textContent = `${p.username} (${p.sessionId.substring(0, 6)})`;
+    topRow.appendChild(nameSpan);
 
     const controls = document.createElement('div');
     controls.style.display = 'flex';
+    controls.style.gap = '5px';
 
-    if (name !== username) {
+    if (p.username !== username) {
         const followBtn = document.createElement('button');
         followBtn.className = 'follow-btn';
         followBtn.textContent = 'Follow';
-        followBtn.onclick = () => toggleFollow(sessionId, followBtn);
+        followBtn.onclick = (e) => {
+            e.stopPropagation();
+            toggleFollow(p.sessionId, followBtn);
+        };
 
-        if (followingSessionId === sessionId) {
+        if (followingSessionId === p.sessionId) {
             followBtn.textContent = 'Unfollow';
             followBtn.classList.add('following');
         }
         controls.appendChild(followBtn);
     }
 
-    if (isHost && name !== username) {
+    if (isHost && p.username !== username) {
         const kickBtn = document.createElement('button');
         kickBtn.className = 'kick-btn';
         kickBtn.textContent = 'Kick';
         kickBtn.title = 'Kick user';
-        kickBtn.onclick = () => {
-             vscode.postMessage({ command: 'kick-user', targetSessionId: sessionId });
+        kickBtn.onclick = (e) => {
+             e.stopPropagation();
+             vscode.postMessage({ command: 'kick-user', targetSessionId: p.sessionId });
         };
         controls.appendChild(kickBtn);
     }
 
-    li.appendChild(nameSpan);
-    li.appendChild(controls);
+    topRow.appendChild(controls);
+    container.appendChild(topRow);
 
-    participantsList.appendChild(li);
+    // File info row
+    if (p.activeFile) {
+        const infoRow = document.createElement('div');
+        infoRow.style.fontSize = '0.85em';
+        infoRow.style.color = 'var(--vscode-descriptionForeground)';
+        infoRow.style.marginTop = '2px';
+        infoRow.style.whiteSpace = 'nowrap';
+        infoRow.style.overflow = 'hidden';
+        infoRow.style.textOverflow = 'ellipsis';
+
+        const lineInfo = p.cursorLine !== undefined ? `:${p.cursorLine + 1}` : '';
+        infoRow.textContent = `${p.activeFile}${lineInfo}`;
+        infoRow.title = `${p.activeFile} (Line ${p.cursorLine !== undefined ? p.cursorLine + 1 : '?'})`;
+
+        container.appendChild(infoRow);
+    }
+
+    li.appendChild(container);
+}
+
+function updateUserCursor(sessionId: string, file?: string, line?: number, char?: number) {
+    const p = participants.find(part => part.sessionId === sessionId);
+    if (!p) { return; }
+
+    let changed = false;
+    if (file && p.activeFile !== file) {
+        p.activeFile = file;
+        changed = true;
+    }
+    if (line !== undefined && p.cursorLine !== line) {
+        p.cursorLine = line;
+        changed = true;
+    }
+    if (char !== undefined) {
+        p.cursorChar = char;
+    }
+
+    if (changed) {
+        const li = document.getElementById(`user-${sessionId}`);
+        if (li) {
+            renderUserItem(li, p);
+        }
+    }
 }
 
 function removeUserFromUI(sessionId: string) {

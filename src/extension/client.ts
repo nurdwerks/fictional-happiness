@@ -10,7 +10,7 @@ import {
     MessageType, BaseMessage, JoinMessage, TextOperationMessage,
     CursorSelectionMessage, WebRTCSignalMessage, FileCreateMessage,
     FileInitMessage, FileDeleteMessage, ChatMessage, FollowUserMessage,
-    TerminalDataMessage, ApproveRequestMessage, RejectRequestMessage, KickUserMessage
+    TerminalDataMessage, ApproveRequestMessage, RejectRequestMessage, KickUserMessage, JumpToUserMessage
 } from '../common/messages';
 import { CollaborationServer } from '../server/server';
 
@@ -229,6 +229,9 @@ export class CollaborationClient {
                          vscode.window.showInformationMessage(`Stopped following user.`);
                     }
                     break;
+                case 'jump-to-user':
+                     this.handleJumpToUser(message as JumpToUserMessage);
+                     break;
                 case 'approve-request':
                     this.removePendingRequest(message.targetSessionId);
                     this.send({
@@ -309,7 +312,7 @@ export class CollaborationClient {
             });
         });
 
-        // Selection Changes
+        // Selection Changes (Cursor Move)
         vscode.window.onDidChangeTextEditorSelection(event => {
             if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {return;}
             if (event.textEditor.document.uri.scheme !== 'file') {return;}
@@ -319,7 +322,26 @@ export class CollaborationClient {
                 type: 'cursor-selection',
                 file: vscode.workspace.asRelativePath(event.textEditor.document.uri),
                 start: event.textEditor.document.offsetAt(selection.start),
-                end: event.textEditor.document.offsetAt(selection.end)
+                end: event.textEditor.document.offsetAt(selection.end),
+                cursorLine: selection.active.line,
+                cursorChar: selection.active.character
+            };
+            this.send(msg);
+        });
+
+        // Active Editor Change (Tab Switch)
+        vscode.window.onDidChangeActiveTextEditor(editor => {
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) { return; }
+            if (!editor || editor.document.uri.scheme !== 'file') { return; }
+
+            const selection = editor.selection;
+            const msg: CursorSelectionMessage = {
+                type: 'cursor-selection',
+                file: vscode.workspace.asRelativePath(editor.document.uri),
+                start: editor.document.offsetAt(selection.start),
+                end: editor.document.offsetAt(selection.end),
+                cursorLine: selection.active.line,
+                cursorChar: selection.active.character
             };
             this.send(msg);
         });
@@ -774,7 +796,7 @@ export class CollaborationClient {
             return;
         }
 
-        const editor = vscode.window.visibleTextEditors.find(e => vscode.workspace.asRelativePath(e.document.uri) === msg.file);
+        let editor = vscode.window.visibleTextEditors.find(e => vscode.workspace.asRelativePath(e.document.uri) === msg.file);
 
         if (editor) {
             this.isApplyingRemoteOp = true;
@@ -795,8 +817,41 @@ export class CollaborationClient {
             });
             this.isApplyingRemoteOp = false;
         } else {
-             const fullPath = path.join(rootPath, msg.file);
-             fs.writeFileSync(fullPath, shadow);
+            // File is not visible. Open it as a tab (if not already open) and apply edit via WorkspaceEdit
+            const uri = vscode.Uri.file(path.join(rootPath, msg.file));
+            try {
+                // Ensure it's open in the document model (adds to open editors)
+                await vscode.workspace.openTextDocument(uri);
+
+                const workspaceEdit = new vscode.WorkspaceEdit();
+                let index = 0;
+                // We need to calculate ranges based on the document text.
+                // But we don't have the document object easily unless we use the one from openTextDocument.
+                const doc = await vscode.workspace.openTextDocument(uri);
+
+                op.forEach((c: any) => {
+                    if (typeof c === 'number') {
+                        index += c;
+                    } else if (typeof c === 'string') {
+                        workspaceEdit.insert(uri, doc.positionAt(index), c);
+                    } else if (typeof c === 'object' && c.d) {
+                        const start = doc.positionAt(index);
+                        const end = doc.positionAt(index + c.d.length);
+                        workspaceEdit.delete(uri, new vscode.Range(start, end));
+                        index += c.d.length;
+                    }
+                });
+
+                this.isApplyingRemoteOp = true;
+                await vscode.workspace.applyEdit(workspaceEdit);
+                this.isApplyingRemoteOp = false;
+
+            } catch (e) {
+                console.error("Failed to apply background edit", e);
+                // Fallback to disk write if API fails
+                const fullPath = path.join(rootPath, msg.file);
+                fs.writeFileSync(fullPath, shadow);
+            }
         }
     }
 
@@ -804,6 +859,9 @@ export class CollaborationClient {
         if (this.followingSessionId && msg.sessionId === this.followingSessionId && msg.file) {
             this.handleFollowUser(msg);
         }
+
+        // Relay cursor info to Webview
+        this.webviewPanel?.webview.postMessage(msg);
 
         if (!msg.file || !msg.sessionId) {return;}
 
@@ -860,6 +918,25 @@ export class CollaborationClient {
             editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
         } catch (e) {
             console.warn(`Follow mode: Could not open or scroll to ${msg.file}`, e);
+        }
+    }
+
+    private async handleJumpToUser(msg: JumpToUserMessage) {
+        if (!msg.file) { return; }
+        const rootPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+        const uri = vscode.Uri.file(path.join(rootPath, msg.file));
+
+        try {
+            const doc = await vscode.workspace.openTextDocument(uri);
+            const editor = await vscode.window.showTextDocument(doc);
+
+            if (msg.line !== undefined) {
+                const pos = new vscode.Position(msg.line, msg.char || 0);
+                editor.selection = new vscode.Selection(pos, pos);
+                editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+            }
+        } catch (e) {
+            console.warn(`Jump to user: Could not open or scroll to ${msg.file}`, e);
         }
     }
 
