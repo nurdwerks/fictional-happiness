@@ -39,6 +39,7 @@ export class CollaborationServer {
     private hostSessionId: string | null = null;
     private allowExternalConnections = false;
     private wsEnabled = false; // WebSocket disabled by default
+    private userIdentity: { username: string } | null = null; // To store user identity
 
     // Event hook for extension to populate files
     public onClientApproved?: (sessionId: string) => void;
@@ -76,6 +77,7 @@ export class CollaborationServer {
     }
 
     private handleRestRequest(req: http.IncomingMessage, res: http.ServerResponse) {
+        this.log(`API request: ${req.method} ${req.url}`);
         // Set CORS headers to allow Webview to access
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -168,6 +170,31 @@ export class CollaborationServer {
                 }));
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify(clientList));
+                return;
+            }
+        }
+
+        if (url.pathname === '/identity') {
+            if (req.method === 'GET') {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(this.userIdentity || {}));
+                return;
+            }
+
+            if (req.method === 'POST') {
+                let body = '';
+                req.on('data', chunk => body += chunk);
+                req.on('end', () => {
+                    try {
+                        this.userIdentity = JSON.parse(body);
+                        this.log(`Set identity: ${this.userIdentity?.username}`);
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ status: 'ok' }));
+                    } catch (e) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Invalid JSON' }));
+                    }
+                });
                 return;
             }
         }
